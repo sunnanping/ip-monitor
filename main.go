@@ -578,6 +578,11 @@ func isLinux() bool {
 	return runtime.GOOS == "linux"
 }
 
+// isDarwin 检测是否为macOS系统
+func isDarwin() bool {
+	return runtime.GOOS == "darwin"
+}
+
 // addToWindowsStartup 添加到Windows开机启动
 func addToWindowsStartup() error {
 	execPath, err := getExecutablePath()
@@ -682,12 +687,91 @@ func removeFromLinuxStartup() error {
 	return nil
 }
 
+// addToDarwinStartup 添加到macOS开机启动（LaunchAgent）
+func addToDarwinStartup() error {
+	execPath, err := getExecutablePath()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %v", err)
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("获取用户主目录失败: %v", err)
+	}
+
+	launchAgentsDir := filepath.Join(homeDir, "Library", "LaunchAgents")
+	err = os.MkdirAll(launchAgentsDir, 0755)
+	if err != nil {
+		return fmt.Errorf("创建LaunchAgents目录失败: %v", err)
+	}
+
+	plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.ip-monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ip-monitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ip-monitor.err</string>
+</dict>
+</plist>
+`, execPath)
+
+	plistPath := filepath.Join(launchAgentsDir, "com.user.ip-monitor.plist")
+	err = ioutil.WriteFile(plistPath, []byte(plistContent), 0644)
+	if err != nil {
+		return fmt.Errorf("写入LaunchAgent plist文件失败: %v", err)
+	}
+
+	cmd := exec.Command("launchctl", "load", plistPath)
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("加载LaunchAgent失败: %v", err)
+	}
+
+	fmt.Printf("已添加到macOS开机启动: %s\n", execPath)
+	return nil
+}
+
+// removeFromDarwinStartup 从macOS开机启动中移除
+func removeFromDarwinStartup() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("获取用户主目录失败: %v", err)
+	}
+
+	plistPath := filepath.Join(homeDir, "Library", "LaunchAgents", "com.user.ip-monitor.plist")
+
+	cmd := exec.Command("launchctl", "unload", plistPath)
+	_ = cmd.Run()
+
+	err = os.Remove(plistPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("删除LaunchAgent plist文件失败: %v", err)
+	}
+
+	fmt.Println("已从macOS开机启动中移除")
+	return nil
+}
+
 // addToStartup 添加到开机启动
 func addToStartup() error {
 	if isWindows() {
 		return addToWindowsStartup()
 	} else if isLinux() {
 		return addToLinuxStartup()
+	} else if isDarwin() {
+		return addToDarwinStartup()
 	}
 	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
 }
@@ -698,6 +782,8 @@ func removeFromStartup() error {
 		return removeFromWindowsStartup()
 	} else if isLinux() {
 		return removeFromLinuxStartup()
+	} else if isDarwin() {
+		return removeFromDarwinStartup()
 	}
 	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
 }
@@ -727,6 +813,22 @@ func checkAndAddToStartup() error {
 		}
 
 		return addToLinuxStartup()
+	} else if isDarwin() {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("获取用户主目录失败: %v", err)
+		}
+
+		plistPath := filepath.Join(homeDir, "Library", "LaunchAgents", "com.user.ip-monitor.plist")
+		if _, err := os.Stat(plistPath); err == nil {
+			cmd := exec.Command("launchctl", "list", "com.user.ip-monitor")
+			if cmd.Run() == nil {
+				fmt.Println("程序已在开机启动中")
+				return nil
+			}
+		}
+
+		return addToDarwinStartup()
 	}
 
 	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)

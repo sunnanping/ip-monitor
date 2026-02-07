@@ -18,12 +18,14 @@
 ### 3. 开机启动
 - **Windows平台**：通过注册表 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 添加开机启动项
 - **Linux平台**：通过systemd服务实现开机启动
+- **macOS平台**：通过LaunchAgent实现开机启动
 - 程序启动时自动检测并添加到开机启动（如果未添加）
 
 ### 4. 卸载功能
 - 支持 `--uninstall` 参数从开机启动中移除程序
 - Windows：从注册表中删除启动项
 - Linux：停止并禁用systemd服务，删除服务文件
+- macOS：使用launchctl卸载LaunchAgent，删除plist文件
 
 ### 5. 运行记录
 - 记录每次运行的时间、IP地址、邮件发送结果
@@ -162,6 +164,9 @@ ip-monitor.exe --uninstall
 
 # Linux
 ./ip-monitor --uninstall
+
+# macOS
+./ip-monitor --uninstall
 ```
 
 ## 邮件内容说明
@@ -242,6 +247,12 @@ go build -o ip-monitor.exe
     - 程序会按顺序尝试API列表，直到成功获取到IP地址
 
 ## 版本历史
+
+### v1.3.0
+- 添加macOS平台开机启动支持
+- 使用LaunchAgent实现macOS开机启动
+- 支持macOS平台的卸载功能
+- 完善跨平台支持（Windows、Linux、macOS）
 
 ### v1.2.0
 - 配置文件格式从JSON改为YAML
