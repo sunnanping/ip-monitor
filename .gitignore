@@ -39,5 +39,5 @@ run_record.json
 Thumbs.db
 
 # 不提交敏感测试数据
-config.yaml
-config.json
+*.yaml
+*.json
