@@ -11,14 +11,28 @@ mail-config:
 # IPv4地址API列表
 ip-v4-list:
   - https://ipinfo.io/ip
-  - https://api.ipify.org
+  - https://api.ipify.org?format=json&ipv4=true
+  - https://ifconfig.me/ip
+  - https://ipecho.net/plain
+  - https://api.ip.sb/ip
   - https://checkip.amazonaws.com
+  - https://ident.me
+  - https://bot.whatismyipaddress.com
+  - https://myexternalip.com/raw
+  - https://ipaddr.site
 
 # IPv6地址API列表
 ip-v6-list:
   - https://api6.ipify.org?format=json
-  - https://v6.ident.me/
-  - https://ipv6.icanhazip.com/
+  - https://ifconfig.me/ip
+  - https://ipecho.net/plain
+  - https://api.ip.sb/ip
+  - https://ipinfo.io/ip
+  - https://checkip.amazonaws.com
+  - https://ident.me
+  - https://bot.whatismyipaddress.com
+  - https://myexternalip.com/raw
+  - https://ipaddr.site
 
 # 任务参数配置
 task-para:
