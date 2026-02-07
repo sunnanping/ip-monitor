@@ -15,6 +15,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"golang.org/x/sys/windows/registry"
+	"gopkg.in/yaml.v3"
 )
 
 // IPResponse 用于解析IP API响应
@@ -22,16 +23,28 @@ type IPResponse struct {
 	IP string `json:"ip"`
 }
 
+// MailConfig 邮件配置
+type MailConfig struct {
+	SmtpServer string `yaml:"smtp_server"` // SMTP服务器地址
+	SmtpPort   string `yaml:"smtp_port"`   // SMTP服务器端口
+	Username   string `yaml:"username"`    // SMTP用户名（邮箱地址）
+	Password   string `yaml:"password"`    // SMTP密码（邮箱授权码）
+	From       string `yaml:"from"`        // 发件人邮箱地址
+	To         string `yaml:"to"`          // 收件人邮箱地址（多个地址用英文逗号分隔）
+	SendMode   int    `yaml:"send_mode"`   // 邮件发送模式：1-单个发送，3-群发
+}
+
+// TaskPara 任务参数配置
+type TaskPara struct {
+	CronExpression string `yaml:"cron_expression"` // cron表达式，定义IP检查频率
+}
+
 // Config 用于存储配置信息
 type Config struct {
-	SmtpServer     string `json:"smtp_server"`     // SMTP服务器地址
-	SmtpPort       string `json:"smtp_port"`       // SMTP服务器端口
-	Username       string `json:"username"`        // SMTP用户名（邮箱地址）
-	Password       string `json:"password"`        // SMTP密码（邮箱授权码）
-	From           string `json:"from"`            // 发件人邮箱地址
-	To             string `json:"to"`              // 收件人邮箱地址（多个地址用英文逗号分隔）
-	CronExpression string `json:"cron_expression"` // cron表达式，定义IP检查频率
-	SendMode       int    `json:"send_mode"`       // 邮件发送模式：1-单个发送，3-群发
+	MailConfig *MailConfig `yaml:"mail-config"` // 邮件参数配置
+	IPv4List   []string    `yaml:"ip-v4-list"`  // IPv4地址API列表
+	IPv6List   []string    `yaml:"ip-v6-list"`  // IPv6地址API列表
+	TaskPara   *TaskPara   `yaml:"task-para"`   // 任务参数配置
 }
 
 // RunRecord 运行记录
@@ -56,19 +69,6 @@ var (
 	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
 )
 
-// getDefaultConfig 获取默认配置（126邮箱）
-func getDefaultConfig() *Config {
-	return &Config{
-		SmtpServer:     "smtp.126.com",
-		SmtpPort:       "25",
-		Username:       "sunnanping@126.com",
-		Password:       "XG3SFF7B4P7Kf8ac",
-		From:           "sunnanping@126.com",
-		To:             "sunnanping@126.com",
-		CronExpression: "* * * * *",
-	}
-}
-
 // loadConfig 加载配置文件
 func loadConfig(filePath string) (*Config, error) {
 	data, err := ioutil.ReadFile(filePath)
@@ -77,8 +77,16 @@ func loadConfig(filePath string) (*Config, error) {
 	}
 
 	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %v", err)
+	}
+
+	// 检查必需的配置项
+	if config.MailConfig == nil {
+		return nil, fmt.Errorf("邮件配置(mail-config)不能为空")
+	}
+	if config.TaskPara == nil {
+		return nil, fmt.Errorf("任务参数(task-para)不能为空")
 	}
 
 	return &config, nil
@@ -217,31 +225,33 @@ func getIPv4Address() (string, error) {
 		Timeout: 10 * time.Second,
 	}
 
-	// 按稳定性从高到低排序的10个IPv4地址API
-	apis := []struct {
-		url    string
-		isJSON bool
-	}{
-		{"https://ipinfo.io/ip", false},                       // 5. 很高稳定性 - 提供丰富的IP信息
-		{"https://api.ipify.org?format=json&ipv4=true", true}, // 1. 最高稳定性 - 专门为开发者设计的免费IP查询服务
-		{"https://ifconfig.me/ip", false},                     // 2. 最高稳定性 - 老牌IP查询服务，历史悠久
-		{"https://ipecho.net/plain", false},                   // 3. 很高稳定性 - 专业的IP查询服务
-		{"https://api.ip.sb/ip", false},                       // 4. 很高稳定性 - 提供详细的IP信息
-		{"https://checkip.amazonaws.com", false},              // 6. 高稳定性 - AWS提供的IP查询服务
-		{"https://ident.me", false},                           // 7. 高稳定性 - 可靠的IP查询服务
-		{"https://bot.whatismyipaddress.com", false},          // 8. 高稳定性 - 专业的IP查询服务
-		{"https://myexternalip.com/raw", false},               // 9. 中高稳定性 - 可靠的IP查询服务
-		{"https://ipaddr.site", false},                        // 10. 中高稳定性 - 简单的IP查询服务
+	// 从配置文件中获取IPv4地址API列表，如果为空则使用默认列表
+	apis := appConfig.IPv4List
+	if len(apis) == 0 {
+		// 使用默认的IPv4地址API列表
+		apis = []string{
+			"https://ipinfo.io/ip",
+			"https://api.ipify.org?format=json&ipv4=true",
+			"https://ifconfig.me/ip",
+			"https://ipecho.net/plain",
+			"https://api.ip.sb/ip",
+			"https://checkip.amazonaws.com",
+			"https://ident.me",
+			"https://bot.whatismyipaddress.com",
+			"https://myexternalip.com/raw",
+			"https://ipaddr.site",
+		}
+		fmt.Println("使用默认IPv4地址API列表")
 	}
 
 	fmt.Println("开始遍历IPv4地址API清单...")
 
-	for i, api := range apis {
-		fmt.Printf("正在尝试第%d个IPv4 API: %s\n", i+1, api.url)
+	for i, apiURL := range apis {
+		fmt.Printf("正在尝试第%d个IPv4 API: %s\n", i+1, apiURL)
 
-		resp, err := client.Get(api.url)
+		resp, err := client.Get(apiURL)
 		if err != nil {
-			fmt.Printf("尝试IPv4 API %s失败: %v\n", api.url, err)
+			fmt.Printf("尝试IPv4 API %s失败: %v\n", apiURL, err)
 			continue
 		}
 
@@ -250,23 +260,23 @@ func getIPv4Address() (string, error) {
 		resp.Body.Close()
 
 		if err != nil {
-			fmt.Printf("读取IPv4 API %s响应失败: %v\n", api.url, err)
+			fmt.Printf("读取IPv4 API %s响应失败: %v\n", apiURL, err)
 			continue
 		}
 
 		responseStr := string(body)
-		fmt.Printf("IPv4 API %s返回状态码: %d, 返回值: %s\n", api.url, resp.StatusCode, responseStr)
+		fmt.Printf("IPv4 API %s返回状态码: %d, 返回值: %s\n", apiURL, resp.StatusCode, responseStr)
 
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("IPv4 API %s返回错误状态码: %d\n", api.url, resp.StatusCode)
+			fmt.Printf("IPv4 API %s返回错误状态码: %d\n", apiURL, resp.StatusCode)
 			continue
 		}
 
 		var ip string
-		if api.isJSON {
+		if strings.Contains(apiURL, "format=json") {
 			var ipResp IPResponse
 			if err := json.Unmarshal(body, &ipResp); err != nil {
-				fmt.Printf("解析IPv4 API %s响应失败: %v\n", api.url, err)
+				fmt.Printf("解析IPv4 API %s响应失败: %v\n", apiURL, err)
 				continue
 			}
 			ip = ipResp.IP
@@ -278,14 +288,14 @@ func getIPv4Address() (string, error) {
 		if ip != "" {
 			// 检查IPv4地址的有效性
 			if isValidIPv4(ip) {
-				fmt.Printf("成功从IPv4 API %s获取到有效的IP地址: %s\n", api.url, ip)
+				fmt.Printf("成功从IPv4 API %s获取到有效的IP地址: %s\n", apiURL, ip)
 				return ip, nil
 			} else {
-				fmt.Printf("IPv4 API %s返回的IP地址无效: %s\n", api.url, ip)
+				fmt.Printf("IPv4 API %s返回的IP地址无效: %s\n", apiURL, ip)
 				continue
 			}
 		} else {
-			fmt.Printf("IPv4 API %s返回空IP地址\n", api.url)
+			fmt.Printf("IPv4 API %s返回空IP地址\n", apiURL)
 			continue
 		}
 	}
@@ -300,31 +310,33 @@ func getIPv6Address() (string, error) {
 		Timeout: 10 * time.Second,
 	}
 
-	// 按稳定性从高到低排序的10个IPv6地址API
-	apis := []struct {
-		url    string
-		isJSON bool
-	}{
-		{"https://api6.ipify.org?format=json", true}, // 1. 最高稳定性 - 专门为IPv6设计的IP查询服务
-		{"https://ifconfig.me/ip", false},            // 2. 最高稳定性 - 老牌IP查询服务，支持IPv6
-		{"https://ipecho.net/plain", false},          // 3. 很高稳定性 - 专业的IP查询服务，支持IPv6
-		{"https://api.ip.sb/ip", false},              // 4. 很高稳定性 - 提供详细的IP信息，支持IPv6
-		{"https://ipinfo.io/ip", false},              // 5. 很高稳定性 - 提供丰富的IP信息，支持IPv6
-		{"https://checkip.amazonaws.com", false},     // 6. 高稳定性 - AWS提供的IP查询服务，支持IPv6
-		{"https://ident.me", false},                  // 7. 高稳定性 - 可靠的IP查询服务，支持IPv6
-		{"https://bot.whatismyipaddress.com", false}, // 8. 高稳定性 - 专业的IP查询服务，支持IPv6
-		{"https://myexternalip.com/raw", false},      // 9. 中高稳定性 - 可靠的IP查询服务，支持IPv6
-		{"https://ipaddr.site", false},               // 10. 中高稳定性 - 简单的IP查询服务，支持IPv6
+	// 从配置文件中获取IPv6地址API列表，如果为空则使用默认列表
+	apis := appConfig.IPv6List
+	if len(apis) == 0 {
+		// 使用默认的IPv6地址API列表
+		apis = []string{
+			"https://api6.ipify.org?format=json",
+			"https://ifconfig.me/ip",
+			"https://ipecho.net/plain",
+			"https://api.ip.sb/ip",
+			"https://ipinfo.io/ip",
+			"https://checkip.amazonaws.com",
+			"https://ident.me",
+			"https://bot.whatismyipaddress.com",
+			"https://myexternalip.com/raw",
+			"https://ipaddr.site",
+		}
+		fmt.Println("使用默认IPv6地址API列表")
 	}
 
 	fmt.Println("开始遍历IPv6地址API清单...")
 
-	for i, api := range apis {
-		fmt.Printf("正在尝试第%d个IPv6 API: %s\n", i+1, api.url)
+	for i, apiURL := range apis {
+		fmt.Printf("正在尝试第%d个IPv6 API: %s\n", i+1, apiURL)
 
-		resp, err := client.Get(api.url)
+		resp, err := client.Get(apiURL)
 		if err != nil {
-			fmt.Printf("尝试IPv6 API %s失败: %v\n", api.url, err)
+			fmt.Printf("尝试IPv6 API %s失败: %v\n", apiURL, err)
 			continue
 		}
 
@@ -333,23 +345,23 @@ func getIPv6Address() (string, error) {
 		resp.Body.Close()
 
 		if err != nil {
-			fmt.Printf("读取IPv6 API %s响应失败: %v\n", api.url, err)
+			fmt.Printf("读取IPv6 API %s响应失败: %v\n", apiURL, err)
 			continue
 		}
 
 		responseStr := string(body)
-		fmt.Printf("IPv6 API %s返回状态码: %d, 返回值: %s\n", api.url, resp.StatusCode, responseStr)
+		fmt.Printf("IPv6 API %s返回状态码: %d, 返回值: %s\n", apiURL, resp.StatusCode, responseStr)
 
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("IPv6 API %s返回错误状态码: %d\n", api.url, resp.StatusCode)
+			fmt.Printf("IPv6 API %s返回错误状态码: %d\n", apiURL, resp.StatusCode)
 			continue
 		}
 
 		var ip string
-		if api.isJSON {
+		if strings.Contains(apiURL, "format=json") {
 			var ipResp IPResponse
 			if err := json.Unmarshal(body, &ipResp); err != nil {
-				fmt.Printf("解析IPv6 API %s响应失败: %v\n", api.url, err)
+				fmt.Printf("解析IPv6 API %s响应失败: %v\n", apiURL, err)
 				continue
 			}
 			ip = ipResp.IP
@@ -359,10 +371,10 @@ func getIPv6Address() (string, error) {
 		}
 
 		if ip != "" {
-			fmt.Printf("成功从IPv6 API %s获取到IP地址: %s\n", api.url, ip)
+			fmt.Printf("成功从IPv6 API %s获取到IP地址: %s\n", apiURL, ip)
 			return ip, nil
 		} else {
-			fmt.Printf("IPv6 API %s返回空IP地址\n", api.url)
+			fmt.Printf("IPv6 API %s返回空IP地址\n", apiURL)
 			continue
 		}
 	}
@@ -498,7 +510,7 @@ func checkIPChanges() {
 			fmt.Println("检测到IP地址变化，准备发送邮件通知...")
 		}
 
-		sendErr := sendEmail(appConfig.SmtpServer, appConfig.SmtpPort, appConfig.Username, appConfig.Password, appConfig.From, appConfig.To, subject, body, appConfig.SendMode)
+		sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
 		if sendErr != nil {
 			fmt.Printf("邮件发送失败: %v\n", sendErr)
 			record.EmailSent = true
@@ -751,10 +763,10 @@ func main() {
 	fmt.Printf("进程ID: %d\n", programPID)
 
 	// 加载配置文件
-	config, err := loadConfig("config.json")
+	config, err := loadConfig("config.yaml")
 	if err != nil {
-		fmt.Printf("警告: %v，将使用默认配置\n", err)
-		config = getDefaultConfig()
+		fmt.Printf("警告: %v，请检查config.yaml配置文件\n", err)
+		os.Exit(1)
 	}
 	appConfig = config
 
@@ -835,7 +847,7 @@ func main() {
 			currentTime, cachedIPv4, cachedIPv6, true, "本次运行（程序启动）")
 	}
 
-	sendErr := sendEmail(appConfig.SmtpServer, appConfig.SmtpPort, appConfig.Username, appConfig.Password, appConfig.From, appConfig.To, subject, body, appConfig.SendMode)
+	sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
 	if sendErr != nil {
 		fmt.Printf("邮件发送失败: %v\n", sendErr)
 	} else {
@@ -844,8 +856,8 @@ func main() {
 	}
 
 	c := cron.New()
-	c.AddFunc(appConfig.CronExpression, checkIPChanges)
-	fmt.Printf("定时检查已启动，Cron表达式: %s\n", appConfig.CronExpression)
+	c.AddFunc(appConfig.TaskPara.CronExpression, checkIPChanges)
+	fmt.Printf("定时检查已启动，Cron表达式: %s\n", appConfig.TaskPara.CronExpression)
 
 	c.Start()
 

@@ -47,37 +47,66 @@
 
 ## 配置文件
 
-### config.json
-程序配置文件，包含以下字段：
+### config.yaml
+程序配置文件，包含以下4个节点：
 
-```json
-{
-  "smtp_server": "smtp.126.com",
-  "smtp_port": "25",
-  "username": "your@email.com",
-  "password": "your_password",
-  "from": "your@email.com",
-  "to": "your@email.com",
-  "cron_expression": "*/2 * * * *",
-  "send_mode": 1
-}
+```yaml
+# 邮件参数配置
+mail-config:
+  smtp_server: smtp.126.com
+  smtp_port: "25"
+  username: your@email.com
+  password: your_password_or_auth_code
+  from: your@email.com
+  to: recipient1@email.com,recipient2@email.com
+  send_mode: 1  # 1-单个发送，3-群发
+
+# IPv4地址API列表
+ip-v4-list:
+  - https://ipinfo.io/ip
+  - https://api.ipify.org
+  - https://checkip.amazonaws.com
+
+# IPv6地址API列表
+ip-v6-list:
+  - https://api6.ipify.org?format=json
+  - https://v6.ident.me/
+  - https://ipv6.icanhazip.com/
+
+# 任务参数配置
+task-para:
+  cron_expression: "*/1 * * * *"  # 每分钟检查一次
 ```
 
 **配置说明：**
+
+#### mail-config（邮件参数配置）
 - `smtp_server`: SMTP服务器地址
 - `smtp_port`: SMTP服务器端口
 - `username`: SMTP用户名（邮箱地址）
 - `password`: SMTP密码（邮箱授权码）
 - `from`: 发件人邮箱地址
 - `to`: 收件人邮箱地址（多个地址用英文逗号分隔）
+- `send_mode`: 邮件发送模式
+  - `1` - 单个发送模式（多个收件人用逗号分隔，逐个发送）
+  - `3` - 群发模式（所有收件人一起发送）
+
+#### ip-v4-list（IPv4地址API列表）
+- IPv4地址查询API的URL列表
+- 如果配置文件中为空，则使用程序中的默认列表
+- 程序会按顺序尝试这些API，直到成功获取到IP地址
+
+#### ip-v6-list（IPv6地址API列表）
+- IPv6地址查询API的URL列表
+- 如果配置文件中为空，则使用程序中的默认列表
+- 程序会按顺序尝试这些API，直到成功获取到IP地址
+
+#### task-para（任务参数配置）
 - `cron_expression`: cron表达式，定义IP检查频率
   - `* * * * *` - 每分钟检查一次
   - `*/2 * * * *` - 每2分钟检查一次
   - `0 * * * *` - 每小时检查一次
   - `0 9 * * *` - 每天上午9点检查一次
-- `send_mode`: 邮件发送模式
-  - `1` - 单个发送模式（多个收件人用逗号分隔，逐个发送）
-  - `3` - 群发模式（所有收件人一起发送）
 
 ### run_record.json
 运行记录文件，包含以下字段：
@@ -192,8 +221,22 @@ go build -o ip-monitor.exe
     - 首次运行：包含2个部分（运行程序的消息、当前IP地址信息）
     - 第二次运行：包含2个部分（运行程序的消息、当前IP地址信息）
     - 第三次及以后：包含3个部分（运行程序的消息、上一次运行日志、最后1次运行信息）
+11. **配置文件格式**：
+    - 使用YAML格式的配置文件 `config.yaml`
+    - 配置文件分为4个节点：mail-config、ip-v4-list、ip-v6-list、task-para
+    - IPv4和IPv6的API列表可以在配置文件中自定义，如果为空则使用程序中的默认列表
+    - 程序会按顺序尝试API列表，直到成功获取到IP地址
 
 ## 版本历史
+
+### v1.2.0
+- 配置文件格式从JSON改为YAML
+- 配置文件分为4个节点：mail-config、ip-v4-list、ip-v6-list、task-para
+- IPv4和IPv6的API列表可以在配置文件中自定义
+- 如果配置文件中API列表为空，则使用程序中的默认列表
+- 添加gopkg.in/yaml.v3依赖支持YAML解析
+- 更新.gitignore文件，忽略config.yaml配置文件
+- 创建config.example.yaml示例配置文件
 
 ### v1.1.0
 - 添加邮件发送模式支持（单个发送和群发）

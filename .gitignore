@@ -22,7 +22,7 @@ ip-monitor
 ip-monitor.exe
 
 # Configuration files with sensitive information
-# config.json
+# config.yaml
 
 # Run records
 run_record.json
