@@ -1,4 +1,4 @@
-module go-ip-monitor
+module ip-monitor
 
 go 1.24.0
 
