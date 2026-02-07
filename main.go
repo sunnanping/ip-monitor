@@ -69,9 +69,11 @@ var (
 	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
 	sendMsg      bool       // 是否发送了邮件
 	execPath     string     // 程序路径
+	execDir      string     // 程序所在目录（用于确保开机启动时能正确读取配置文件）
 )
 
 // loadConfig 加载配置文件
+// filePath: 配置文件的完整路径
 func loadConfig(filePath string) (*Config, error) {
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -444,6 +446,15 @@ func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body
 func checkIPChanges() {
 	fmt.Println("\n开始检查IP地址变化...")
 
+	// 获取可执行文件所在目录
+	var err error
+	execPath, err = getExecutablePath()
+	if err != nil {
+		fmt.Printf("获取程序路径失败: %v\n", err)
+		return
+	}
+	execDir = filepath.Dir(execPath)
+
 	// 获取当前IPv4地址
 	currentIPv4, err := getIPv4Address()
 	if err != nil {
@@ -525,7 +536,8 @@ func checkIPChanges() {
 			}
 
 			var err error
-			body, err = renderMailTemplate("mail_template.html", templateData)
+			templatePath := filepath.Join(execDir, "mail_template.html")
+			body, err = renderMailTemplate(templatePath, templateData)
 			if err != nil {
 				fmt.Printf("渲染邮件模板失败: %v\n", err)
 				body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s", changeDetails, currentTime)
@@ -553,7 +565,8 @@ func checkIPChanges() {
 	lastRunTime = currentTime
 
 	// 保存运行记录
-	saveErr := saveRunRecord("run_record.json", record)
+	recordPath := filepath.Join(execDir, "run_record.json")
+	saveErr := saveRunRecord(recordPath, record)
 	if saveErr != nil {
 		fmt.Printf("保存运行记录失败: %v\n", saveErr)
 	}
@@ -857,8 +870,12 @@ func main() {
 		fmt.Println("程序将继续运行，但不会自动开机启动")
 	}
 
+	// 获取可执行文件所在目录
+	execDir = filepath.Dir(execPath)
+
 	// 加载上一次运行记录
-	runRecord, err := loadRunRecord("run_record.json")
+	recordPath := filepath.Join(execDir, "run_record.json")
+	runRecord, err := loadRunRecord(recordPath)
 	if err != nil {
 		fmt.Printf("加载运行记录失败: %v（可能是首次运行）\n", err)
 	}
@@ -889,8 +906,12 @@ func main() {
 	fmt.Printf("程序路径: %s\n", execPath)
 	fmt.Printf("进程ID: %d\n", programPID)
 
+	// 获取可执行文件所在目录
+	execDir := filepath.Dir(execPath)
+
 	// 加载配置文件
-	config, err := loadConfig("config.yaml")
+	configPath := filepath.Join(execDir, "config.yaml")
+	config, err := loadConfig(configPath)
 	if err != nil {
 		fmt.Printf("警告: %v，请检查config.yaml配置文件\n", err)
 		os.Exit(1)
@@ -929,7 +950,8 @@ func main() {
 		CurrentIPv6:  cachedIPv6,
 	}
 
-	body, err = renderMailTemplate("mail_template.html", templateData)
+	templatePath := filepath.Join(execDir, "mail_template.html")
+	body, err = renderMailTemplate(templatePath, templateData)
 	if err != nil {
 		fmt.Printf("渲染邮件模板失败: %v\n", err)
 		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
