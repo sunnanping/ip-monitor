@@ -67,6 +67,7 @@ var (
 	runCount     int        // 累计运行次数
 	firstRunTime string     // 第一次运行时间（程序启动时间）
 	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
+	sendMsg      bool       // 是否发送了邮件
 )
 
 // loadConfig 加载配置文件
@@ -391,6 +392,8 @@ func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body
 	fmt.Printf("收件人: %s\n", to)
 	fmt.Printf("邮件主题: %s\n", subject)
 	fmt.Printf("邮件内容: %s\n", body)
+
+	sendMsg = true
 
 	// 验证配置
 	if smtpServer == "" || smtpPort == "" || username == "" || password == "" || from == "" || to == "" {
@@ -748,6 +751,8 @@ func main() {
 		firstRunTime = ""
 		lastRunTime = ""
 	}
+
+	sendMsg = false
 
 	// 输出上一次运行日志
 	printLastRunLog(lastRecord)
