@@ -68,6 +68,7 @@ var (
 	firstRunTime string     // 第一次运行时间（程序启动时间）
 	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
 	sendMsg      bool       // 是否发送了邮件
+	execPath     string     // 程序路径
 )
 
 // loadConfig 加载配置文件
@@ -509,7 +510,26 @@ func checkIPChanges() {
 			fmt.Println("检测到IP地址异常：无法获取到任何IP地址")
 		} else {
 			subject = fmt.Sprintf("公网IP地址变更通知 - %s", currentTime)
-			body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s", changeDetails, currentTime)
+
+			templateData := &TemplateData{
+				ExecPath:     execPath,
+				ProgramPID:   programPID,
+				FirstRunTime: firstRunTime,
+				LastRunTime:  lastRunTime,
+				RunCount:     runCount,
+				SendMsg:      sendMsg,
+				LastRecord:   runRecord,
+				CurrentTime:  currentTime,
+				CurrentIPv4:  currentIPv4,
+				CurrentIPv6:  currentIPv6,
+			}
+
+			var err error
+			body, err = renderMailTemplate("mail_template.html", templateData)
+			if err != nil {
+				fmt.Printf("渲染邮件模板失败: %v\n", err)
+				body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s", changeDetails, currentTime)
+			}
 			fmt.Println("检测到IP地址变化，准备发送邮件通知...")
 		}
 
@@ -736,16 +756,16 @@ func main() {
 	}
 
 	// 加载上一次运行记录
-	lastRecord, err := loadRunRecord("run_record.json")
+	runRecord, err := loadRunRecord("run_record.json")
 	if err != nil {
 		fmt.Printf("加载运行记录失败: %v（可能是首次运行）\n", err)
 	}
 
 	// 初始化运行次数和运行时间
-	if lastRecord != nil {
-		runCount = lastRecord.RunCount
-		firstRunTime = lastRecord.LastRunTime
-		lastRunTime = lastRecord.LastRunTime
+	if runRecord != nil {
+		runCount = runRecord.RunCount
+		firstRunTime = runRecord.LastRunTime
+		lastRunTime = runRecord.LastRunTime
 	} else {
 		runCount = 0
 		firstRunTime = ""
@@ -755,10 +775,10 @@ func main() {
 	sendMsg = false
 
 	// 输出上一次运行日志
-	printLastRunLog(lastRecord)
+	printLastRunLog(runRecord)
 
 	// 获取程序路径和进程ID
-	execPath, err := getExecutablePath()
+	execPath, err = getExecutablePath()
 	if err != nil {
 		fmt.Printf("获取程序路径失败: %v\n", err)
 		execPath = "未知路径"
@@ -785,71 +805,32 @@ func main() {
 
 	// 首次运行，发送初始IP地址通知邮件
 	fmt.Println("首次运行，发送初始IP地址通知邮件...")
-	subject := fmt.Sprintf("公网IP地址初始通知 - %s", time.Now().Format("2006-01-02 15:04:05"))
-
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
-	if lastRecord == nil {
+	subject := fmt.Sprintf("公网IP地址初始通知 - %s", currentTime)
+
+	if runRecord == nil {
 		firstRunTime = currentTime
 	}
 
 	var body string
 
-	if lastRecord == nil {
-		body = fmt.Sprintf(`<html>
-<body>
-<h2 style="color: red; font-weight: bold;">程序名称: IP监控程序</h2>
-<p style="color: red; font-weight: bold;">程序路径: %s</p>
-<p style="color: red; font-weight: bold;">进程ID: %d</p>
-<p style="color: red; font-weight: bold;">第一次运行时间: %s</p>
-<p style="color: red; font-weight: bold;">上一次运行时间: 无</p>
-<p style="color: red; font-weight: bold;">累计运行次数: %d</p>
-<br/>
-<p>第一次运行该程序，首次发送邮件</p>
-<p>当前公网IP地址如下:</p>
-<p><strong>IPv4地址:</strong> %s</p>
-<p><strong>IPv6地址:</strong> %s</p>
-<p><strong>检测时间:</strong> %s</p>
-</body>
-</html>`, execPath, programPID, currentTime, runCount, cachedIPv4, cachedIPv6, currentTime)
-	} else {
-		var lastRunTimeDisplay string
-		if runCount == 1 {
-			lastRunTimeDisplay = "无"
-		} else {
-			lastRunTimeDisplay = lastRunTime
-		}
+	templateData := &TemplateData{
+		ExecPath:     execPath,
+		ProgramPID:   programPID,
+		FirstRunTime: firstRunTime,
+		LastRunTime:  lastRunTime,
+		RunCount:     runCount,
+		SendMsg:      sendMsg,
+		LastRecord:   runRecord,
+		CurrentTime:  currentTime,
+		CurrentIPv4:  cachedIPv4,
+		CurrentIPv6:  cachedIPv6,
+	}
 
-		body = fmt.Sprintf(`<html>
-<body>
-<h2 style="color: red; font-weight: bold;">程序名称: IP监控程序</h2>
-<p style="color: red; font-weight: bold;">程序路径: %s</p>
-<p style="color: red; font-weight: bold;">进程ID: %d</p>
-<p style="color: red; font-weight: bold;">第一次运行时间: %s</p>
-<p style="color: red; font-weight: bold;">上一次运行时间: %s</p>
-<p style="color: red; font-weight: bold;">累计运行次数: %d</p>
-<br/>
-<p>程序重新启动，当前公网IP地址如下:</p>
-<p><strong>IPv4地址:</strong> %s</p>
-<p><strong>IPv6地址:</strong> %s</p>
-<p><strong>检测时间:</strong> %s</p>
-<hr/>
-<h3>上一次运行信息</h3>
-<p><strong>运行时间:</strong> %s</p>
-<p><strong>IPv4地址:</strong> %s</p>
-<p><strong>IPv6地址:</strong> %s</p>
-<p><strong>是否发送邮件:</strong> %v</p>
-<p><strong>邮件发送结果:</strong> %s</p>
-<hr/>
-<h3>最后1次运行信息</h3>
-<p><strong>运行时间:</strong> %s</p>
-<p><strong>IPv4地址:</strong> %s</p>
-<p><strong>IPv6地址:</strong> %s</p>
-<p><strong>是否发送邮件:</strong> %v</p>
-<p><strong>邮件发送结果:</strong> %s</p>
-</body>
-</html>`, execPath, programPID, firstRunTime, lastRunTimeDisplay, runCount, cachedIPv4, cachedIPv6, currentTime,
-			lastRecord.LastRunTime, lastRecord.IPv4, lastRecord.IPv6, lastRecord.EmailSent, lastRecord.EmailResult,
-			currentTime, cachedIPv4, cachedIPv6, true, "本次运行（程序启动）")
+	body, err = renderMailTemplate("mail_template.html", templateData)
+	if err != nil {
+		fmt.Printf("渲染邮件模板失败: %v\n", err)
+		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
 	}
 
 	sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
