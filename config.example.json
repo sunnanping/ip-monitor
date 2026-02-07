@@ -1,0 +1,10 @@
+{
+  "smtp_server": "smtp.example.com",
+  "smtp_port": "25",
+  "username": "your@email.com",
+  "password": "your_password_or_auth_code",
+  "from": "your@email.com",
+  "to": "recipient1@email.com,recipient2@email.com",
+  "cron_expression": "*/1 * * * *",
+  "send_mode": 1
+}

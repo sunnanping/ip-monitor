@@ -1,0 +1,10 @@
+{
+  "smtp_server": "smtp.126.com",
+  "smtp_port": "25",
+  "username": "sunnanping@126.com",
+  "password": "XG3SFF7B4P7Kf8ac",
+  "from": "sunnanping@126.com",
+  "to": "sunnanping@126.com,sunnanping@163.com",
+  "cron_expression": "*/1 * * * *",
+  "send_mode": 1
+}

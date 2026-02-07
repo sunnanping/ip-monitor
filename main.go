@@ -1,0 +1,853 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/smtp"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"golang.org/x/sys/windows/registry"
+)
+
+// IPResponse 用于解析IP API响应
+type IPResponse struct {
+	IP string `json:"ip"`
+}
+
+// Config 用于存储配置信息
+type Config struct {
+	SmtpServer     string `json:"smtp_server"`     // SMTP服务器地址
+	SmtpPort       string `json:"smtp_port"`       // SMTP服务器端口
+	Username       string `json:"username"`        // SMTP用户名（邮箱地址）
+	Password       string `json:"password"`        // SMTP密码（邮箱授权码）
+	From           string `json:"from"`            // 发件人邮箱地址
+	To             string `json:"to"`              // 收件人邮箱地址（多个地址用英文逗号分隔）
+	CronExpression string `json:"cron_expression"` // cron表达式，定义IP检查频率
+	SendMode       int    `json:"send_mode"`       // 邮件发送模式：1-单个发送，3-群发
+}
+
+// RunRecord 运行记录
+type RunRecord struct {
+	LastRunTime string `json:"last_run_time"` // 上一次运行时间
+	IPv4        string `json:"ipv4"`          // IPv4地址
+	IPv6        string `json:"ipv6"`          // IPv6地址
+	EmailSent   bool   `json:"email_sent"`    // 是否发送了邮件
+	EmailResult string `json:"email_result"`  // 邮件发送结果
+	RunCount    int    `json:"run_count"`     // 累计运行次数
+}
+
+// 全局变量存储缓存的IP地址和运行信息
+var (
+	cachedIPv4   string     // 缓存的IPv4地址
+	cachedIPv6   string     // 缓存的IPv6地址
+	appConfig    *Config    // 配置信息
+	runRecord    *RunRecord // 运行记录
+	programPID   int        // 程序进程ID
+	runCount     int        // 累计运行次数
+	firstRunTime string     // 第一次运行时间（程序启动时间）
+	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
+)
+
+// getDefaultConfig 获取默认配置（126邮箱）
+func getDefaultConfig() *Config {
+	return &Config{
+		SmtpServer:     "smtp.126.com",
+		SmtpPort:       "25",
+		Username:       "sunnanping@126.com",
+		Password:       "XG3SFF7B4P7Kf8ac",
+		From:           "sunnanping@126.com",
+		To:             "sunnanping@126.com",
+		CronExpression: "* * * * *",
+	}
+}
+
+// loadConfig 加载配置文件
+func loadConfig(filePath string) (*Config, error) {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败: %v", err)
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败: %v", err)
+	}
+
+	return &config, nil
+}
+
+// loadRunRecord 加载运行记录
+func loadRunRecord(filePath string) (*RunRecord, error) {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("读取运行记录文件失败: %v", err)
+	}
+
+	var record RunRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("解析运行记录文件失败: %v", err)
+	}
+
+	return &record, nil
+}
+
+// saveRunRecord 保存运行记录
+func saveRunRecord(filePath string, record *RunRecord) error {
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化运行记录失败: %v", err)
+	}
+
+	err = ioutil.WriteFile(filePath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("写入运行记录文件失败: %v", err)
+	}
+
+	return nil
+}
+
+// printLastRunLog 输出上一次运行日志
+func printLastRunLog(record *RunRecord) {
+	if record == nil {
+		fmt.Println("第一次运行该程序，首次发送邮件")
+		return
+	}
+
+	fmt.Println("\n========== 上一次运行记录 ==========")
+	fmt.Printf("运行时间: %s\n", record.LastRunTime)
+	fmt.Printf("IPv4地址: %s\n", record.IPv4)
+	fmt.Printf("IPv6地址: %s\n", record.IPv6)
+	fmt.Printf("是否发送邮件: %v\n", record.EmailSent)
+	if record.EmailSent {
+		fmt.Printf("邮件发送结果: %s\n", record.EmailResult)
+	}
+	fmt.Println("===================================\n")
+}
+
+// getIPAddress 获取公网IP地址
+func getIPAddress() (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 按稳定性从高到低排序的5个公网IP查询API
+	apis := []struct {
+		url    string
+		isJSON bool
+	}{
+		{"https://api.ipify.org?format=json", true}, // 1. 最高稳定性 - 专门为开发者设计的免费IP查询服务
+		{"https://ifconfig.me/ip", false},           // 2. 最高稳定性 - 老牌IP查询服务，历史悠久
+		{"https://ipecho.net/plain", false},         // 3. 很高稳定性 - 专业的IP查询服务
+		{"https://api.ip.sb/ip", false},             // 4. 很高稳定性 - 提供详细的IP信息
+		{"https://ipinfo.io/ip", false},             // 5. 高稳定性 - 提供丰富的IP信息
+	}
+
+	for _, api := range apis {
+		resp, err := client.Get(api.url)
+		if err != nil {
+			fmt.Printf("尝试API %s失败: %v\n", api.url, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("API %s返回错误状态码: %d\n", api.url, resp.StatusCode)
+			continue
+		}
+
+		if api.isJSON {
+			var ipResp IPResponse
+			if err := json.NewDecoder(resp.Body).Decode(&ipResp); err != nil {
+				fmt.Printf("解析API %s响应失败: %v\n", api.url, err)
+				continue
+			}
+			return ipResp.IP, nil
+		} else {
+			// 处理纯文本响应
+			buf := make([]byte, 100)
+			n, err := resp.Body.Read(buf)
+			if err != nil {
+				fmt.Printf("读取API %s响应失败: %v\n", api.url, err)
+				continue
+			}
+			ip := string(buf[:n])
+			// 去除空白字符
+			ip = strings.TrimSpace(ip)
+			return ip, nil
+		}
+	}
+
+	return "", fmt.Errorf("所有API都失败了")
+}
+
+// isValidIPv4 检查IPv4地址的有效性
+func isValidIPv4(ip string) bool {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return false
+	}
+
+	for _, part := range parts {
+		num, err := fmt.Sscanf(part, "%d", new(int))
+		if err != nil || num != 1 {
+			return false
+		}
+
+		var value int
+		fmt.Sscanf(part, "%d", &value)
+		if value < 0 || value > 255 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// getIPv4Address 获取公网IPv4地址
+func getIPv4Address() (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 按稳定性从高到低排序的10个IPv4地址API
+	apis := []struct {
+		url    string
+		isJSON bool
+	}{
+		{"https://ipinfo.io/ip", false},                       // 5. 很高稳定性 - 提供丰富的IP信息
+		{"https://api.ipify.org?format=json&ipv4=true", true}, // 1. 最高稳定性 - 专门为开发者设计的免费IP查询服务
+		{"https://ifconfig.me/ip", false},                     // 2. 最高稳定性 - 老牌IP查询服务，历史悠久
+		{"https://ipecho.net/plain", false},                   // 3. 很高稳定性 - 专业的IP查询服务
+		{"https://api.ip.sb/ip", false},                       // 4. 很高稳定性 - 提供详细的IP信息
+		{"https://checkip.amazonaws.com", false},              // 6. 高稳定性 - AWS提供的IP查询服务
+		{"https://ident.me", false},                           // 7. 高稳定性 - 可靠的IP查询服务
+		{"https://bot.whatismyipaddress.com", false},          // 8. 高稳定性 - 专业的IP查询服务
+		{"https://myexternalip.com/raw", false},               // 9. 中高稳定性 - 可靠的IP查询服务
+		{"https://ipaddr.site", false},                        // 10. 中高稳定性 - 简单的IP查询服务
+	}
+
+	fmt.Println("开始遍历IPv4地址API清单...")
+
+	for i, api := range apis {
+		fmt.Printf("正在尝试第%d个IPv4 API: %s\n", i+1, api.url)
+
+		resp, err := client.Get(api.url)
+		if err != nil {
+			fmt.Printf("尝试IPv4 API %s失败: %v\n", api.url, err)
+			continue
+		}
+
+		// 读取响应内容
+		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if err != nil {
+			fmt.Printf("读取IPv4 API %s响应失败: %v\n", api.url, err)
+			continue
+		}
+
+		responseStr := string(body)
+		fmt.Printf("IPv4 API %s返回状态码: %d, 返回值: %s\n", api.url, resp.StatusCode, responseStr)
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("IPv4 API %s返回错误状态码: %d\n", api.url, resp.StatusCode)
+			continue
+		}
+
+		var ip string
+		if api.isJSON {
+			var ipResp IPResponse
+			if err := json.Unmarshal(body, &ipResp); err != nil {
+				fmt.Printf("解析IPv4 API %s响应失败: %v\n", api.url, err)
+				continue
+			}
+			ip = ipResp.IP
+		} else {
+			// 处理纯文本响应
+			ip = strings.TrimSpace(responseStr)
+		}
+
+		if ip != "" {
+			// 检查IPv4地址的有效性
+			if isValidIPv4(ip) {
+				fmt.Printf("成功从IPv4 API %s获取到有效的IP地址: %s\n", api.url, ip)
+				return ip, nil
+			} else {
+				fmt.Printf("IPv4 API %s返回的IP地址无效: %s\n", api.url, ip)
+				continue
+			}
+		} else {
+			fmt.Printf("IPv4 API %s返回空IP地址\n", api.url)
+			continue
+		}
+	}
+
+	fmt.Println("遍历完所有IPv4 API，均未能成功获取IP地址")
+	return "", fmt.Errorf("所有IPv4 API都失败了")
+}
+
+// getIPv6Address 获取公网IPv6地址
+func getIPv6Address() (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 按稳定性从高到低排序的10个IPv6地址API
+	apis := []struct {
+		url    string
+		isJSON bool
+	}{
+		{"https://api6.ipify.org?format=json", true}, // 1. 最高稳定性 - 专门为IPv6设计的IP查询服务
+		{"https://ifconfig.me/ip", false},            // 2. 最高稳定性 - 老牌IP查询服务，支持IPv6
+		{"https://ipecho.net/plain", false},          // 3. 很高稳定性 - 专业的IP查询服务，支持IPv6
+		{"https://api.ip.sb/ip", false},              // 4. 很高稳定性 - 提供详细的IP信息，支持IPv6
+		{"https://ipinfo.io/ip", false},              // 5. 很高稳定性 - 提供丰富的IP信息，支持IPv6
+		{"https://checkip.amazonaws.com", false},     // 6. 高稳定性 - AWS提供的IP查询服务，支持IPv6
+		{"https://ident.me", false},                  // 7. 高稳定性 - 可靠的IP查询服务，支持IPv6
+		{"https://bot.whatismyipaddress.com", false}, // 8. 高稳定性 - 专业的IP查询服务，支持IPv6
+		{"https://myexternalip.com/raw", false},      // 9. 中高稳定性 - 可靠的IP查询服务，支持IPv6
+		{"https://ipaddr.site", false},               // 10. 中高稳定性 - 简单的IP查询服务，支持IPv6
+	}
+
+	fmt.Println("开始遍历IPv6地址API清单...")
+
+	for i, api := range apis {
+		fmt.Printf("正在尝试第%d个IPv6 API: %s\n", i+1, api.url)
+
+		resp, err := client.Get(api.url)
+		if err != nil {
+			fmt.Printf("尝试IPv6 API %s失败: %v\n", api.url, err)
+			continue
+		}
+
+		// 读取响应内容
+		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if err != nil {
+			fmt.Printf("读取IPv6 API %s响应失败: %v\n", api.url, err)
+			continue
+		}
+
+		responseStr := string(body)
+		fmt.Printf("IPv6 API %s返回状态码: %d, 返回值: %s\n", api.url, resp.StatusCode, responseStr)
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("IPv6 API %s返回错误状态码: %d\n", api.url, resp.StatusCode)
+			continue
+		}
+
+		var ip string
+		if api.isJSON {
+			var ipResp IPResponse
+			if err := json.Unmarshal(body, &ipResp); err != nil {
+				fmt.Printf("解析IPv6 API %s响应失败: %v\n", api.url, err)
+				continue
+			}
+			ip = ipResp.IP
+		} else {
+			// 处理纯文本响应
+			ip = strings.TrimSpace(responseStr)
+		}
+
+		if ip != "" {
+			fmt.Printf("成功从IPv6 API %s获取到IP地址: %s\n", api.url, ip)
+			return ip, nil
+		} else {
+			fmt.Printf("IPv6 API %s返回空IP地址\n", api.url)
+			continue
+		}
+	}
+
+	fmt.Println("遍历完所有IPv6 API，均未能成功获取IP地址")
+	return "", fmt.Errorf("所有IPv6 API都失败了")
+}
+
+// sendEmail 发送邮件
+func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body string, sendMode int) error {
+	fmt.Printf("准备发送邮件...\n")
+	fmt.Printf("SMTP服务器: %s:%s\n", smtpServer, smtpPort)
+	fmt.Printf("发件人: %s\n", from)
+	fmt.Printf("收件人: %s\n", to)
+	fmt.Printf("邮件主题: %s\n", subject)
+	fmt.Printf("邮件内容: %s\n", body)
+
+	// 验证配置
+	if smtpServer == "" || smtpPort == "" || username == "" || password == "" || from == "" || to == "" {
+		return fmt.Errorf("邮件配置不完整")
+	}
+
+	fmt.Println("正在连接SMTP服务器: " + smtpServer + "; username: " + username)
+	auth := smtp.PlainAuth("", username, password, smtpServer)
+
+	// 构建邮件头，支持HTML格式
+	headers := make(map[string]string)
+	headers["From"] = from
+	headers["Subject"] = subject
+	headers["MIME-Version"] = "1.0"
+	headers["Content-Type"] = "text/html; charset=\"utf-8\""
+
+	message := ""
+	for k, v := range headers {
+		message += fmt.Sprintf("%s: %s\r\n", k, v)
+	}
+	message += "\r\n" + body
+
+	aaddr := fmt.Sprintf("%s:%s", smtpServer, smtpPort)
+
+	var toList []string
+	if sendMode == 1 {
+		toList = strings.Split(to, ",")
+		for i := range toList {
+			toList[i] = strings.TrimSpace(toList[i])
+		}
+	} else {
+		toList = []string{to}
+	}
+
+	fmt.Println("正在发送邮件...")
+	err := smtp.SendMail(aaddr, auth, from, toList, []byte(message))
+	if err != nil {
+		fmt.Printf("邮件发送失败: %v\n", err)
+		return err
+	}
+
+	fmt.Println("邮件发送成功！")
+	return nil
+}
+
+// checkIPChanges 检查IP地址变化并发送通知
+func checkIPChanges() {
+	fmt.Println("\n开始检查IP地址变化...")
+
+	// 获取当前IPv4地址
+	currentIPv4, err := getIPv4Address()
+	if err != nil {
+		fmt.Printf("获取IPv4地址失败: %v\n", err)
+	} else {
+		fmt.Printf("当前IPv4地址: %s\n", currentIPv4)
+	}
+
+	// 获取当前IPv6地址
+	currentIPv6, err := getIPv6Address()
+	if err != nil {
+		fmt.Printf("获取IPv6地址失败: %v\n", err)
+	} else {
+		fmt.Printf("当前IPv6地址: %s\n", currentIPv6)
+	}
+
+	// 检查是否有变化
+	hasChanged := false
+	var changeDetails string
+
+	if currentIPv4 != "" && currentIPv4 != cachedIPv4 {
+		hasChanged = true
+		if cachedIPv4 == "" {
+			changeDetails += fmt.Sprintf("IPv4地址: 首次检测到 %s\n", currentIPv4)
+		} else {
+			changeDetails += fmt.Sprintf("IPv4地址: %s → %s\n", cachedIPv4, currentIPv4)
+		}
+		cachedIPv4 = currentIPv4
+	}
+
+	if currentIPv6 != "" && currentIPv6 != cachedIPv6 {
+		hasChanged = true
+		if cachedIPv6 == "" {
+			changeDetails += fmt.Sprintf("IPv6地址: 首次检测到 %s\n", currentIPv6)
+		} else {
+			changeDetails += fmt.Sprintf("IPv6地址: %s → %s\n", cachedIPv6, currentIPv6)
+		}
+		cachedIPv6 = currentIPv6
+	}
+
+	// 检查是否两个地址都为空
+	bothEmpty := currentIPv4 == "" && currentIPv6 == ""
+
+	// 创建运行记录
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	record := &RunRecord{
+		LastRunTime: currentTime,
+		IPv4:        currentIPv4,
+		IPv6:        currentIPv6,
+		EmailSent:   false,
+		RunCount:    runCount,
+	}
+
+	// 如果有变化或两个地址都为空，发送邮件通知
+	if hasChanged || bothEmpty {
+		fmt.Println("准备发送邮件通知...")
+
+		var subject string
+		var body string
+
+		if bothEmpty {
+			subject = fmt.Sprintf("公网IP地址异常通知 - %s", currentTime)
+			body = fmt.Sprintf("检测到公网IP地址异常：无法获取到任何IP地址\n\n检测时间: %s", currentTime)
+			fmt.Println("检测到IP地址异常：无法获取到任何IP地址")
+		} else {
+			subject = fmt.Sprintf("公网IP地址变更通知 - %s", currentTime)
+			body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s", changeDetails, currentTime)
+			fmt.Println("检测到IP地址变化，准备发送邮件通知...")
+		}
+
+		sendErr := sendEmail(appConfig.SmtpServer, appConfig.SmtpPort, appConfig.Username, appConfig.Password, appConfig.From, appConfig.To, subject, body, appConfig.SendMode)
+		if sendErr != nil {
+			fmt.Printf("邮件发送失败: %v\n", sendErr)
+			record.EmailSent = true
+			record.EmailResult = fmt.Sprintf("失败: %v", sendErr)
+		} else {
+			fmt.Println("邮件发送成功！")
+			record.EmailSent = true
+			record.EmailResult = "成功"
+		}
+	} else {
+		fmt.Println("未检测到IP地址变化")
+		record.EmailSent = false
+		record.EmailResult = "未发送（IP地址未变化）"
+	}
+
+	// 更新上一次运行时间
+	lastRunTime = currentTime
+
+	// 保存运行记录
+	saveErr := saveRunRecord("run_record.json", record)
+	if saveErr != nil {
+		fmt.Printf("保存运行记录失败: %v\n", saveErr)
+	}
+}
+
+// getExecutablePath 获取当前可执行文件的完整路径
+func getExecutablePath() (string, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(execPath)
+}
+
+// isWindows 检测是否为Windows系统
+func isWindows() bool {
+	return runtime.GOOS == "windows"
+}
+
+// isLinux 检测是否为Linux系统
+func isLinux() bool {
+	return runtime.GOOS == "linux"
+}
+
+// addToWindowsStartup 添加到Windows开机启动
+func addToWindowsStartup() error {
+	execPath, err := getExecutablePath()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %v", err)
+	}
+
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("打开注册表失败: %v", err)
+	}
+	defer key.Close()
+
+	err = key.SetStringValue("IPMonitor", execPath)
+	if err != nil {
+		return fmt.Errorf("设置注册表值失败: %v", err)
+	}
+
+	fmt.Printf("已添加到Windows开机启动: %s\n", execPath)
+	return nil
+}
+
+// removeFromWindowsStartup 从Windows开机启动中移除
+func removeFromWindowsStartup() error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("打开注册表失败: %v", err)
+	}
+	defer key.Close()
+
+	err = key.DeleteValue("IPMonitor")
+	if err != nil {
+		return fmt.Errorf("删除注册表值失败: %v", err)
+	}
+
+	fmt.Println("已从Windows开机启动中移除")
+	return nil
+}
+
+// addToLinuxStartup 添加到Linux开机启动（systemd）
+func addToLinuxStartup() error {
+	execPath, err := getExecutablePath()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %v", err)
+	}
+
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=IP Monitor Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, execPath)
+
+	servicePath := "/etc/systemd/system/ip-monitor.service"
+	err = ioutil.WriteFile(servicePath, []byte(serviceContent), 0644)
+	if err != nil {
+		return fmt.Errorf("写入systemd服务文件失败: %v", err)
+	}
+
+	cmd := exec.Command("systemctl", "daemon-reload")
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("重载systemd失败: %v", err)
+	}
+
+	cmd = exec.Command("systemctl", "enable", "ip-monitor.service")
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("启用服务失败: %v", err)
+	}
+
+	fmt.Printf("已添加到Linux开机启动: %s\n", execPath)
+	return nil
+}
+
+// removeFromLinuxStartup 从Linux开机启动中移除
+func removeFromLinuxStartup() error {
+	servicePath := "/etc/systemd/system/ip-monitor.service"
+
+	cmd := exec.Command("systemctl", "stop", "ip-monitor.service")
+	_ = cmd.Run()
+
+	cmd = exec.Command("systemctl", "disable", "ip-monitor.service")
+	_ = cmd.Run()
+
+	err := os.Remove(servicePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("删除服务文件失败: %v", err)
+	}
+
+	cmd = exec.Command("systemctl", "daemon-reload")
+	_ = cmd.Run()
+
+	fmt.Println("已从Linux开机启动中移除")
+	return nil
+}
+
+// addToStartup 添加到开机启动
+func addToStartup() error {
+	if isWindows() {
+		return addToWindowsStartup()
+	} else if isLinux() {
+		return addToLinuxStartup()
+	}
+	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+}
+
+// removeFromStartup 从开机启动中移除
+func removeFromStartup() error {
+	if isWindows() {
+		return removeFromWindowsStartup()
+	} else if isLinux() {
+		return removeFromLinuxStartup()
+	}
+	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+}
+
+// checkAndAddToStartup 检查并添加到开机启动
+func checkAndAddToStartup() error {
+	if isWindows() {
+		key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
+		if err != nil {
+			return fmt.Errorf("打开注册表失败: %v", err)
+		}
+		defer key.Close()
+
+		_, _, err = key.GetStringValue("IPMonitor")
+		if err == nil {
+			fmt.Println("程序已在开机启动中")
+			return nil
+		}
+
+		return addToWindowsStartup()
+	} else if isLinux() {
+		cmd := exec.Command("systemctl", "is-enabled", "ip-monitor.service")
+		err := cmd.Run()
+		if err == nil {
+			fmt.Println("程序已在开机启动中")
+			return nil
+		}
+
+		return addToLinuxStartup()
+	}
+
+	return fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+}
+
+func main() {
+	// 检查命令行参数
+	if len(os.Args) > 1 {
+		if os.Args[1] == "--uninstall" {
+			fmt.Println("正在从开机启动中移除...")
+			err := removeFromStartup()
+			if err != nil {
+				fmt.Printf("卸载失败: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("卸载成功！")
+			os.Exit(0)
+		}
+	}
+
+	// 检查并添加到开机启动
+	fmt.Println("检查开机启动状态...")
+	err := checkAndAddToStartup()
+	if err != nil {
+		fmt.Printf("添加到开机启动失败: %v\n", err)
+		fmt.Println("程序将继续运行，但不会自动开机启动")
+	}
+
+	// 加载上一次运行记录
+	lastRecord, err := loadRunRecord("run_record.json")
+	if err != nil {
+		fmt.Printf("加载运行记录失败: %v（可能是首次运行）\n", err)
+	}
+
+	// 初始化运行次数和运行时间
+	if lastRecord != nil {
+		runCount = lastRecord.RunCount
+		firstRunTime = lastRecord.LastRunTime
+		lastRunTime = lastRecord.LastRunTime
+	} else {
+		runCount = 0
+		firstRunTime = ""
+		lastRunTime = ""
+	}
+
+	// 输出上一次运行日志
+	printLastRunLog(lastRecord)
+
+	// 获取程序路径和进程ID
+	execPath, err := getExecutablePath()
+	if err != nil {
+		fmt.Printf("获取程序路径失败: %v\n", err)
+		execPath = "未知路径"
+	}
+	programPID = os.Getpid()
+	fmt.Printf("程序路径: %s\n", execPath)
+	fmt.Printf("进程ID: %d\n", programPID)
+
+	// 加载配置文件
+	config, err := loadConfig("config.json")
+	if err != nil {
+		fmt.Printf("警告: %v，将使用默认配置\n", err)
+		config = getDefaultConfig()
+	}
+	appConfig = config
+
+	// 初始化缓存的IP地址
+	fmt.Println("初始化IP地址缓存...")
+	cachedIPv4, _ = getIPv4Address()
+	cachedIPv6, _ = getIPv6Address()
+
+	fmt.Printf("初始化IPv4地址: %s\n", cachedIPv4)
+	fmt.Printf("初始化IPv6地址: %s\n", cachedIPv6)
+
+	// 首次运行，发送初始IP地址通知邮件
+	fmt.Println("首次运行，发送初始IP地址通知邮件...")
+	subject := fmt.Sprintf("公网IP地址初始通知 - %s", time.Now().Format("2006-01-02 15:04:05"))
+
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	if lastRecord == nil {
+		firstRunTime = currentTime
+	}
+
+	var body string
+
+	if lastRecord == nil {
+		body = fmt.Sprintf(`<html>
+<body>
+<h2 style="color: red; font-weight: bold;">程序名称: IP监控程序</h2>
+<p style="color: red; font-weight: bold;">程序路径: %s</p>
+<p style="color: red; font-weight: bold;">进程ID: %d</p>
+<p style="color: red; font-weight: bold;">第一次运行时间: %s</p>
+<p style="color: red; font-weight: bold;">上一次运行时间: 无</p>
+<p style="color: red; font-weight: bold;">累计运行次数: %d</p>
+<br/>
+<p>第一次运行该程序，首次发送邮件</p>
+<p>当前公网IP地址如下:</p>
+<p><strong>IPv4地址:</strong> %s</p>
+<p><strong>IPv6地址:</strong> %s</p>
+<p><strong>检测时间:</strong> %s</p>
+</body>
+</html>`, execPath, programPID, currentTime, runCount, cachedIPv4, cachedIPv6, currentTime)
+	} else {
+		var lastRunTimeDisplay string
+		if runCount == 1 {
+			lastRunTimeDisplay = "无"
+		} else {
+			lastRunTimeDisplay = lastRunTime
+		}
+
+		body = fmt.Sprintf(`<html>
+<body>
+<h2 style="color: red; font-weight: bold;">程序名称: IP监控程序</h2>
+<p style="color: red; font-weight: bold;">程序路径: %s</p>
+<p style="color: red; font-weight: bold;">进程ID: %d</p>
+<p style="color: red; font-weight: bold;">第一次运行时间: %s</p>
+<p style="color: red; font-weight: bold;">上一次运行时间: %s</p>
+<p style="color: red; font-weight: bold;">累计运行次数: %d</p>
+<br/>
+<p>程序重新启动，当前公网IP地址如下:</p>
+<p><strong>IPv4地址:</strong> %s</p>
+<p><strong>IPv6地址:</strong> %s</p>
+<p><strong>检测时间:</strong> %s</p>
+<hr/>
+<h3>上一次运行信息</h3>
+<p><strong>运行时间:</strong> %s</p>
+<p><strong>IPv4地址:</strong> %s</p>
+<p><strong>IPv6地址:</strong> %s</p>
+<p><strong>是否发送邮件:</strong> %v</p>
+<p><strong>邮件发送结果:</strong> %s</p>
+<hr/>
+<h3>最后1次运行信息</h3>
+<p><strong>运行时间:</strong> %s</p>
+<p><strong>IPv4地址:</strong> %s</p>
+<p><strong>IPv6地址:</strong> %s</p>
+<p><strong>是否发送邮件:</strong> %v</p>
+<p><strong>邮件发送结果:</strong> %s</p>
+</body>
+</html>`, execPath, programPID, firstRunTime, lastRunTimeDisplay, runCount, cachedIPv4, cachedIPv6, currentTime,
+			lastRecord.LastRunTime, lastRecord.IPv4, lastRecord.IPv6, lastRecord.EmailSent, lastRecord.EmailResult,
+			currentTime, cachedIPv4, cachedIPv6, true, "本次运行（程序启动）")
+	}
+
+	sendErr := sendEmail(appConfig.SmtpServer, appConfig.SmtpPort, appConfig.Username, appConfig.Password, appConfig.From, appConfig.To, subject, body, appConfig.SendMode)
+	if sendErr != nil {
+		fmt.Printf("邮件发送失败: %v\n", sendErr)
+	} else {
+		fmt.Println("邮件发送成功！")
+		runCount++
+	}
+
+	c := cron.New()
+	c.AddFunc(appConfig.CronExpression, checkIPChanges)
+	fmt.Printf("定时检查已启动，Cron表达式: %s\n", appConfig.CronExpression)
+
+	c.Start()
+
+	select {}
+}
