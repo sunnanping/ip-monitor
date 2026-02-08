@@ -5,6 +5,10 @@
 *.so
 *.dylib
 
+# 不提交敏感测试数据
+*.yaml
+*.json
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -42,6 +46,4 @@ run_record.json
 .DS_Store
 Thumbs.db
 
-# 不提交敏感测试数据
-*.yaml
-*.json
+
