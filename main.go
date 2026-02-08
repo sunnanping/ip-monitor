@@ -446,6 +446,8 @@ func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body
 func checkIPChanges() {
 	fmt.Println("\n开始检查IP地址变化...")
 
+	runCount++
+
 	// 获取可执行文件所在目录
 	var err error
 	execPath, err = getExecutablePath()
@@ -563,13 +565,6 @@ func checkIPChanges() {
 
 	// 更新上一次运行时间
 	lastRunTime = currentTime
-
-	// 保存运行记录
-	recordPath := filepath.Join(execDir, "run_record.json")
-	saveErr := saveRunRecord(recordPath, record)
-	if saveErr != nil {
-		fmt.Printf("保存运行记录失败: %v\n", saveErr)
-	}
 }
 
 // getExecutablePath 获取当前可执行文件的完整路径
@@ -873,27 +868,17 @@ func main() {
 	// 获取可执行文件所在目录
 	execDir = filepath.Dir(execPath)
 
-	// 加载上一次运行记录
-	recordPath := filepath.Join(execDir, "run_record.json")
-	runRecord, err := loadRunRecord(recordPath)
-	if err != nil {
-		fmt.Printf("加载运行记录失败: %v（可能是首次运行）\n", err)
-	}
+	// 不再读取run_record.json文件，每次启动都是全新运行
+	runRecord = nil
 
 	// 初始化运行次数和运行时间
-	if runRecord != nil {
-		runCount = runRecord.RunCount
-		firstRunTime = runRecord.LastRunTime
-		lastRunTime = runRecord.LastRunTime
-	} else {
-		runCount = 0
-		firstRunTime = ""
-		lastRunTime = ""
-	}
+	runCount = 0
+	firstRunTime = ""
+	lastRunTime = ""
 
 	sendMsg = false
 
-	// 输出上一次运行日志
+	// 输出上一次运行日志（首次运行时显示提示信息）
 	printLastRunLog(runRecord)
 
 	// 获取程序路径和进程ID
@@ -962,7 +947,6 @@ func main() {
 		fmt.Printf("邮件发送失败: %v\n", sendErr)
 	} else {
 		fmt.Println("邮件发送成功！")
-		runCount++
 	}
 
 	c := cron.New()
