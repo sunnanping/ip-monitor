@@ -1,14 +1,33 @@
 <html>
 <body>
 		<h2 style="color: red; font-weight: bold;">程序名称: 出口IP地址监控程序</h2>
-		<p style="color: red; font-weight: bold;">程序路径: ${execPath}</p>
-		<p style="color: red; font-weight: bold;">进程ID: ${programPID}</p>
-		<p style="color: red; font-weight: bold;">第一次运行时间: ${firstRunTime}</p>
-		<p style="color: red; font-weight: bold;">累计运行次数: ${runCount}</p>
-		<hr>
-		<p>程序重新启动</p>
+		<p style="color: red; font-weight: bold;">进程ID: ${programPID};程序路径: ${execPath}</p>
+		<p style="color: red; font-weight: bold;">第一次运行时间: ${firstRunTime};累计运行次数: ${runCount}</p>
+	<if condition="lastRunTime != nil">
+		<p style="color: red; font-weight: bold;">上一次运行时间: ${lastRunTime}</p>
+	</if>
+	<if condition1="RunCount == 1"></if>
+		<hr>		
+		<p>程序重新启动</p>		
 		<h3>当前IP地址信息</h3>
 		<p><strong>IPv4地址:</strong> ${currentIPv4}</p>
 		<p><strong>IPv6地址:</strong> ${currentIPv6}</p>
+	</if>
+
+	<if condition2="RunCount > 1">
+		<hr>
+		<h3>上一次运行日志</h3>
+		<p><strong>上一次运行时间:</strong> ${lastRecord.LastRunTime}</p>
+		<p><strong>IPv4地址:</strong> ${lastRecord.IPv4}</p>
+		<p><strong>IPv6地址:</strong> ${lastRecord.IPv6}</p>
+		<p><strong>是否发送邮件:</strong> ${lastRecord.EmailSent}</p>
+		<p><strong>邮件发送结果:</strong> ${lastRecord.EmailResult}</p>
+		<p><strong>累计运行次数:</strong> ${lastRecord.RunCount}</p>
+		<hr>
+		<h3>最后1次运行信息</h3>
+		<p><strong>当前时间:</strong> ${currentTime}</p>
+		<p><strong>IPv4地址:</strong> ${currentIPv4}</p>
+		<p><strong>IPv6地址:</strong> ${currentIPv6}</p>
+	</if>	
 </body>
 </html>
