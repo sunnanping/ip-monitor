@@ -5,9 +5,11 @@
 		<p style="color: red; font-weight: bold;">程序路径: ${execPath}</p>
 		<p style="color: red; font-weight: bold;">进程ID: ${programPID}</p>
 		<p style="color: red; font-weight: bold;">第一次运行时间: ${firstRunTime}</p>
-		<p style="color: red; font-weight: bold;">上一次运行时间: 无</p>
-		<p style="color: red; font-weight: bold;">累计运行次数: 0</p>
-		<p>第一次运行该程序，首次发送邮件</p>
+		<if condition=" RunCount > 1">
+			<p style="color: red; font-weight: bold;">上一次运行时间: ${lastRunTime}</p>
+		</if>
+		<p style="color: red; font-weight: bold;">累计运行次数: ${runCount}</p>
+		<p>程序重新启动</p>
 		<hr>
 		<h3>当前IP地址信息</h3>
 		<p><strong>IPv4地址:</strong> ${currentIPv4}</p>
