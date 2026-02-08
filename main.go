@@ -547,16 +547,19 @@ func checkIPChanges() {
 			fmt.Println("检测到IP地址变化，准备发送邮件通知...")
 		}
 
-		sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
-		if sendErr != nil {
-			fmt.Printf("邮件发送失败: %v\n", sendErr)
-			record.EmailSent = true
-			record.EmailResult = fmt.Sprintf("失败: %v", sendErr)
-		} else {
-			fmt.Println("邮件发送成功！")
-			record.EmailSent = true
-			record.EmailResult = "成功"
-		}
+		// 使用goroutine异步发送邮件，避免阻塞定时任务
+		go func() {
+			sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+			if sendErr != nil {
+				fmt.Printf("邮件发送失败: %v\n", sendErr)
+			} else {
+				fmt.Println("邮件发送成功！")
+			}
+		}()
+
+		// 异步发送邮件，直接标记为已发送（实际发送结果会在goroutine中输出）
+		record.EmailSent = true
+		record.EmailResult = "异步发送中"
 	} else {
 		fmt.Println("未检测到IP地址变化")
 		record.EmailSent = false
@@ -942,12 +945,15 @@ func main() {
 		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
 	}
 
-	sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
-	if sendErr != nil {
-		fmt.Printf("邮件发送失败: %v\n", sendErr)
-	} else {
-		fmt.Println("邮件发送成功！")
-	}
+	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
+	go func() {
+		sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+		if sendErr != nil {
+			fmt.Printf("邮件发送失败: %v\n", sendErr)
+		} else {
+			fmt.Println("邮件发送成功！")
+		}
+	}()
 
 	c := cron.New()
 	c.AddFunc(appConfig.TaskPara.CronExpression, checkIPChanges)
