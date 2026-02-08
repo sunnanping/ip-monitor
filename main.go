@@ -531,7 +531,7 @@ func checkIPChanges() {
 				LastRunTime:  lastRunTime,
 				RunCount:     runCount,
 				SendMsg:      sendMsg,
-				LastRecord:   runRecord,
+				LastRecord:   runRecord, // 已废弃，保留用于兼容性
 				CurrentTime:  currentTime,
 				CurrentIPv4:  currentIPv4,
 				CurrentIPv6:  currentIPv6,
@@ -929,7 +929,7 @@ func main() {
 		LastRunTime:  lastRunTime,
 		RunCount:     runCount,
 		SendMsg:      sendMsg,
-		LastRecord:   runRecord,
+		LastRecord:   runRecord, // 已废弃，保留用于兼容性
 		CurrentTime:  currentTime,
 		CurrentIPv4:  cachedIPv4,
 		CurrentIPv6:  cachedIPv6,
