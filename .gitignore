@@ -25,6 +25,9 @@ vendor/
 ip-monitor
 ip-monitor.exe
 
+# Debug log files
+debug.log
+
 # Configuration files with sensitive information
 # config.yaml
 
