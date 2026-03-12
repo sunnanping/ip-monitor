@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"golang.org/x/sys/windows/registry"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +33,7 @@ type MailConfig struct {
 	From       string `yaml:"from"`        // 发件人邮箱地址
 	To         string `yaml:"to"`          // 收件人邮箱地址（多个地址用英文逗号分隔）
 	SendMode   int    `yaml:"send_mode"`   // 邮件发送模式：1-单个发送，3-群发
+	Title      string `yaml:"title"`       // 邮件标题
 }
 
 // TaskPara 任务参数配置
@@ -517,12 +519,17 @@ func checkIPChanges() {
 		var subject string
 		var body string
 
+		title := appConfig.MailConfig.Title
+		if title == "" {
+			title = "公网IP地址监测"
+		}
+
 		if bothEmpty {
-			subject = fmt.Sprintf("公网IP地址异常通知 - %s", currentTime)
+			subject = fmt.Sprintf("%s - 异常通知 - %s", title, currentTime)
 			body = fmt.Sprintf("检测到公网IP地址异常：无法获取到任何IP地址\n\n检测时间: %s", currentTime)
 			fmt.Println("检测到IP地址异常：无法获取到任何IP地址")
 		} else {
-			subject = fmt.Sprintf("公网IP地址变更通知 - %s", currentTime)
+			subject = fmt.Sprintf("%s - 变更通知 - %s", title, currentTime)
 
 			templateData := &TemplateData{
 				ExecPath:     execPath,
@@ -594,43 +601,267 @@ func isDarwin() bool {
 	return runtime.GOOS == "darwin"
 }
 
-// addToWindowsStartup 添加到Windows开机启动
-func addToWindowsStartup() error {
+// installWindowsService 安装Windows服务
+func installWindowsService() error {
 	execPath, err := getExecutablePath()
 	if err != nil {
 		return fmt.Errorf("获取可执行文件路径失败: %v", err)
 	}
 
-	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	m, err := mgr.Connect()
 	if err != nil {
-		return fmt.Errorf("打开注册表失败: %v", err)
+		return fmt.Errorf("连接服务管理器失败: %v", err)
 	}
-	defer key.Close()
+	defer m.Disconnect()
 
-	err = key.SetStringValue("IPMonitor", execPath)
+	serviceName := "public_ip_monitor"
+	s, err := m.OpenService(serviceName)
+	if err == nil {
+		s.Close()
+		return fmt.Errorf("服务 %s 已存在", serviceName)
+	}
+
+	s, err = m.CreateService(serviceName, execPath, mgr.Config{
+		DisplayName: "Public IP Monitor",
+		Description: "监控公网IP地址变化并发送邮件通知",
+		StartType:   mgr.StartAutomatic,
+	})
 	if err != nil {
-		return fmt.Errorf("设置注册表值失败: %v", err)
+		return fmt.Errorf("创建服务失败: %v", err)
 	}
+	defer s.Close()
 
-	fmt.Printf("已添加到Windows开机启动: %s\n", execPath)
+	fmt.Printf("已安装Windows服务: %s\n", serviceName)
+	fmt.Printf("服务路径: %s\n", execPath)
+	fmt.Printf("启动类型: 自动\n")
 	return nil
 }
 
-// removeFromWindowsStartup 从Windows开机启动中移除
-func removeFromWindowsStartup() error {
-	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+// startWindowsService 启动Windows服务
+func startWindowsService() error {
+	m, err := mgr.Connect()
 	if err != nil {
-		return fmt.Errorf("打开注册表失败: %v", err)
+		return fmt.Errorf("连接服务管理器失败: %v", err)
 	}
-	defer key.Close()
+	defer m.Disconnect()
 
-	err = key.DeleteValue("IPMonitor")
+	serviceName := "public_ip_monitor"
+	s, err := m.OpenService(serviceName)
 	if err != nil {
-		return fmt.Errorf("删除注册表值失败: %v", err)
+		return fmt.Errorf("打开服务失败: %v", err)
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("查询服务状态失败: %v", err)
 	}
 
-	fmt.Println("已从Windows开机启动中移除")
+	if status.State == svc.Running {
+		fmt.Println("服务已在运行中")
+		return nil
+	}
+
+	err = s.Start()
+	if err != nil {
+		return fmt.Errorf("启动服务失败: %v", err)
+	}
+
+	fmt.Printf("已启动服务: %s\n", serviceName)
 	return nil
+}
+
+// uninstallWindowsService 卸载Windows服务
+func uninstallWindowsService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("连接服务管理器失败: %v", err)
+	}
+	defer m.Disconnect()
+
+	serviceName := "public_ip_monitor"
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return fmt.Errorf("打开服务失败: %v", err)
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("查询服务状态失败: %v", err)
+	}
+
+	if status.State != svc.Stopped {
+		_, err = s.Control(svc.Stop)
+		if err != nil {
+			return fmt.Errorf("停止服务失败: %v", err)
+		}
+
+		for i := 0; i < 10; i++ {
+			time.Sleep(1 * time.Second)
+			status, err = s.Query()
+			if err != nil {
+				return fmt.Errorf("查询服务状态失败: %v", err)
+			}
+			if status.State == svc.Stopped {
+				break
+			}
+		}
+	}
+
+	err = s.Delete()
+	if err != nil {
+		return fmt.Errorf("删除服务失败: %v", err)
+	}
+
+	fmt.Printf("已卸载Windows服务: %s\n", serviceName)
+	return nil
+}
+
+// isWindowsServiceInstalled 检查Windows服务是否已安装
+func isWindowsServiceInstalled() (bool, error) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return false, fmt.Errorf("连接服务管理器失败: %v", err)
+	}
+	defer m.Disconnect()
+
+	serviceName := "public_ip_monitor"
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "指定的服务未安装") {
+			return false, nil
+		}
+		return false, err
+	}
+	defer s.Close()
+
+	return true, nil
+}
+
+// ipMonitorService Windows服务实现
+type ipMonitorService struct{}
+
+// Execute 实现svc.Handler接口
+func (s *ipMonitorService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
+	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
+	changes <- svc.Status{State: svc.StartPending}
+
+	// 初始化监控逻辑
+	initializeMonitoring()
+
+	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+
+loop:
+	for {
+		select {
+		case c := <-r:
+			switch c.Cmd {
+			case svc.Interrogate:
+				changes <- c.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				changes <- svc.Status{State: svc.StopPending}
+				break loop
+			case svc.Pause:
+				changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
+			case svc.Continue:
+				changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+			default:
+				fmt.Printf("意外的服务请求: %v\n", c)
+			}
+		}
+	}
+
+	changes <- svc.Status{State: svc.Stopped}
+	return false, 0
+}
+
+// initializeMonitoring 初始化监控逻辑
+func initializeMonitoring() {
+	// 不再读取run_record.json文件，每次启动都是全新运行
+	runRecord = nil
+
+	// 初始化运行次数和运行时间
+	runCount = 0
+	firstRunTime = ""
+	lastRunTime = ""
+
+	sendMsg = false
+
+	// 获取程序路径和进程ID
+	var err error
+	execPath, err = getExecutablePath()
+	if err != nil {
+		execPath = "未知路径"
+	}
+	programPID = os.Getpid()
+
+	// 获取可执行文件所在目录
+	execDir := filepath.Dir(execPath)
+
+	// 加载配置文件
+	configPath := filepath.Join(execDir, "config.yaml")
+	config, err := loadConfig(configPath)
+	if err != nil {
+		return
+	}
+	appConfig = config
+
+	// 初始化缓存的IP地址
+	cachedIPv4, _ = getIPv4Address()
+	cachedIPv6, _ = getIPv6Address()
+
+	// 首次运行，发送初始IP地址通知邮件
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	title := appConfig.MailConfig.Title
+	if title == "" {
+		title = "公网IP地址监测"
+	}
+	subject := fmt.Sprintf("%s - 初始通知 - %s", title, currentTime)
+
+	if runRecord == nil {
+		firstRunTime = currentTime
+	}
+
+	var body string
+
+	templateData := &TemplateData{
+		ExecPath:     execPath,
+		ProgramPID:   programPID,
+		FirstRunTime: firstRunTime,
+		LastRunTime:  lastRunTime,
+		RunCount:     runCount,
+		SendMsg:      sendMsg,
+		LastRecord:   runRecord,
+		CurrentTime:  currentTime,
+		CurrentIPv4:  cachedIPv4,
+		CurrentIPv6:  cachedIPv6,
+	}
+
+	templatePath := filepath.Join(execDir, "mail_template.html")
+	body, err = renderMailTemplate(templatePath, templateData)
+	if err != nil {
+		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
+	}
+
+	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
+	go func() {
+		sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+	}()
+
+	c := cron.New()
+	c.AddFunc(appConfig.TaskPara.CronExpression, checkIPChanges)
+	c.Start()
+}
+
+// addToWindowsStartup 添加到Windows开机启动（已废弃，保留用于兼容性）
+func addToWindowsStartup() error {
+	return installWindowsService()
+}
+
+// removeFromWindowsStartup 从Windows开机启动中移除（已废弃，保留用于兼容性）
+func removeFromWindowsStartup() error {
+	return uninstallWindowsService()
 }
 
 // addToLinuxStartup 添加到Linux开机启动（systemd）
@@ -802,19 +1033,26 @@ func removeFromStartup() error {
 // checkAndAddToStartup 检查并添加到开机启动
 func checkAndAddToStartup() error {
 	if isWindows() {
-		key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
+		installed, err := isWindowsServiceInstalled()
 		if err != nil {
-			return fmt.Errorf("打开注册表失败: %v", err)
+			return fmt.Errorf("检查服务状态失败: %v", err)
 		}
-		defer key.Close()
 
-		_, _, err = key.GetStringValue("IPMonitor")
-		if err == nil {
-			fmt.Println("程序已在开机启动中")
+		if installed {
+			fmt.Println("Windows服务已安装")
+			err = startWindowsService()
+			if err != nil {
+				return fmt.Errorf("启动服务失败: %v", err)
+			}
 			return nil
 		}
 
-		return addToWindowsStartup()
+		err = installWindowsService()
+		if err != nil {
+			return err
+		}
+
+		return startWindowsService()
 	} else if isLinux() {
 		cmd := exec.Command("systemctl", "is-enabled", "ip-monitor.service")
 		err := cmd.Run()
@@ -846,11 +1084,34 @@ func checkAndAddToStartup() error {
 }
 
 func main() {
+	if isWindows() {
+		isIntSess, err := svc.IsWindowsService()
+		if err == nil && isIntSess {
+			runService()
+			return
+		}
+	}
+
+	runApplication()
+}
+
+// runService 以服务模式运行
+func runService() {
+	runsvc := &ipMonitorService{}
+	err := svc.Run("public_ip_monitor", runsvc)
+	if err != nil {
+		fmt.Printf("服务运行失败: %v\n", err)
+		return
+	}
+}
+
+// runApplication 以应用程序模式运行
+func runApplication() {
 	// 检查命令行参数
 	if len(os.Args) > 1 {
 		if os.Args[1] == "--uninstall" {
-			fmt.Println("正在从开机启动中移除...")
-			err := removeFromStartup()
+			fmt.Println("正在卸载Windows服务...")
+			err := uninstallWindowsService()
 			if err != nil {
 				fmt.Printf("卸载失败: %v\n", err)
 				os.Exit(1)
@@ -861,10 +1122,10 @@ func main() {
 	}
 
 	// 检查并添加到开机启动
-	fmt.Println("检查开机启动状态...")
+	fmt.Println("检查Windows服务状态...")
 	err := checkAndAddToStartup()
 	if err != nil {
-		fmt.Printf("添加到开机启动失败: %v\n", err)
+		fmt.Printf("安装Windows服务失败: %v\n", err)
 		fmt.Println("程序将继续运行，但不会自动开机启动")
 	}
 
@@ -917,7 +1178,11 @@ func main() {
 	// 首次运行，发送初始IP地址通知邮件
 	fmt.Println("首次运行，发送初始IP地址通知邮件...")
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
-	subject := fmt.Sprintf("公网IP地址初始通知 - %s", currentTime)
+	title := appConfig.MailConfig.Title
+	if title == "" {
+		title = "公网IP地址监测"
+	}
+	subject := fmt.Sprintf("%s - 初始通知 - %s", title, currentTime)
 
 	if runRecord == nil {
 		firstRunTime = currentTime

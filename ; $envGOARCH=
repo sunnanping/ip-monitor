@@ -1,0 +1,50 @@
+warning: in the working copy of 'mail_template.html', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/mail_template.html b/mail_template.html[m
+[1mindex 79e7d77..fc6bf31 100644[m
+[1m--- a/mail_template.html[m
+[1m+++ b/mail_template.html[m
+[36m@@ -1,14 +1,33 @@[m
+ <html>[m
+ <body>[m
+[31m-<h2 style="color: red; font-weight: bold;">程序名称: 出口IP地址监控程序</h2>[m
+[31m-<p style="color: red; font-weight: bold;">程序路径: ${execPath}</p>[m
+[31m-<p style="color: red; font-weight: bold;">进程ID: ${programPID}</p>[m
+[31m-<p style="color: red; font-weight: bold;">第一次运行时间: ${firstRunTime}</p>[m
+[31m-<p style="color: red; font-weight: bold;">累计运行次数: ${runCount}</p>[m
+[31m-<hr>[m
+[31m-<p>程序重新启动</p>[m
+[31m-<h3>当前IP地址信息</h3>[m
+[31m-<p><strong>IPv4地址:</strong> ${currentIPv4}</p>[m
+[31m-<p><strong>IPv6地址:</strong> ${currentIPv6}</p>[m
+[32m+[m		[32m<h2 style="color: red; font-weight: bold;">程序名称: 出口IP地址监控程序</h2>[m
+[32m+[m		[32m<p style="color: red; font-weight: bold;">进程ID: ${programPID};程序路径: ${execPath}</p>[m
+[32m+[m		[32m<p style="color: red; font-weight: bold;">第一次运行时间: ${firstRunTime};累计运行次数: ${runCount}</p>[m
+[32m+[m	[32m<if condition="lastRunTime != nil">[m
+[32m+[m		[32m<p style="color: red; font-weight: bold;">上一次运行时间: ${lastRunTime}</p>[m
+[32m+[m	[32m</if>[m
+[32m+[m	[32m<if condition1="RunCount == 1"></if>[m
+[32m+[m		[32m<hr>[m[41m		[m
+[32m+[m		[32m<p>程序重新启动</p>[m[41m		[m
+[32m+[m		[32m<h3>当前IP地址信息</h3>[m
+[32m+[m		[32m<p><strong>IPv4地址:</strong> ${currentIPv4}</p>[m
+[32m+[m		[32m<p><strong>IPv6地址:</strong> ${currentIPv6}</p>[m
+[32m+[m	[32m</if>[m
+[32m+[m
+[32m+[m	[32m<if condition2="RunCount > 1">[m
+[32m+[m		[32m<hr>[m
+[32m+[m		[32m<h3>上一次运行日志</h3>[m
+[32m+[m		[32m<p><strong>上一次运行时间:</strong> ${lastRecord.LastRunTime}</p>[m
+[32m+[m		[32m<p><strong>IPv4地址:</strong> ${lastRecord.IPv4}</p>[m
+[32m+[m		[32m<p><strong>IPv6地址:</strong> ${lastRecord.IPv6}</p>[m
+[32m+[m		[32m<p><strong>是否发送邮件:</strong> ${lastRecord.EmailSent}</p>[m
+[32m+[m		[32m<p><strong>邮件发送结果:</strong> ${lastRecord.EmailResult}</p>[m
+[32m+[m		[32m<p><strong>累计运行次数:</strong> ${lastRecord.RunCount}</p>[m
+[32m+[m		[32m<hr>[m
+[32m+[m		[32m<h3>最后1次运行信息</h3>[m
+[32m+[m		[32m<p><strong>当前时间:</strong> ${currentTime}</p>[m
+[32m+[m		[32m<p><strong>IPv4地址:</strong> ${currentIPv4}</p>[m
+[32m+[m		[32m<p><strong>IPv6地址:</strong> ${currentIPv6}</p>[m
+[32m+[m	[32m</if>[m[41m	[m
+ </body>[m
+ </html>[m
+\ No newline at end of file[m
