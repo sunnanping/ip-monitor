@@ -34,6 +34,7 @@ type MailConfig struct {
 	To         string `yaml:"to"`          // 收件人邮箱地址（多个地址用英文逗号分隔）
 	SendMode   int    `yaml:"send_mode"`   // 邮件发送模式：1-单个发送，3-群发
 	Title      string `yaml:"title"`       // 邮件标题
+	SenderName string `yaml:"sender_name"` // 邮件发送者名称
 }
 
 // TaskPara 任务参数配置
@@ -390,10 +391,11 @@ func getIPv6Address() (string, error) {
 }
 
 // sendEmail 发送邮件
-func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body string, sendMode int) error {
+func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body, senderName string, sendMode int) error {
 	fmt.Printf("准备发送邮件...\n")
 	fmt.Printf("SMTP服务器: %s:%s\n", smtpServer, smtpPort)
 	fmt.Printf("发件人: %s\n", from)
+	fmt.Printf("发件人名称: %s\n", senderName)
 	fmt.Printf("收件人: %s\n", to)
 	fmt.Printf("邮件主题: %s\n", subject)
 	fmt.Printf("邮件内容: %s\n", body)
@@ -405,12 +407,17 @@ func sendEmail(smtpServer, smtpPort, username, password, from, to, subject, body
 		return fmt.Errorf("邮件配置不完整")
 	}
 
+	// 如果senderName为空，使用username作为默认值
+	if senderName == "" {
+		senderName = username
+	}
+
 	fmt.Println("正在连接SMTP服务器: " + smtpServer + "; username: " + username)
 	auth := smtp.PlainAuth("", username, password, smtpServer)
 
 	// 构建邮件头，支持HTML格式
 	headers := make(map[string]string)
-	headers["From"] = from
+	headers["From"] = fmt.Sprintf("%s <%s>", senderName, from)
 	headers["Subject"] = subject
 	headers["MIME-Version"] = "1.0"
 	headers["Content-Type"] = "text/html; charset=\"utf-8\""
@@ -556,7 +563,7 @@ func checkIPChanges() {
 
 		// 使用goroutine异步发送邮件，避免阻塞定时任务
 		go func() {
-			sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+			sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SenderName, appConfig.MailConfig.SendMode)
 			if sendErr != nil {
 				fmt.Printf("邮件发送失败: %v\n", sendErr)
 			} else {
@@ -846,7 +853,7 @@ func initializeMonitoring() {
 
 	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
 	go func() {
-		sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+		sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SenderName, appConfig.MailConfig.SendMode)
 	}()
 
 	c := cron.New()
@@ -1212,7 +1219,7 @@ func runApplication() {
 
 	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
 	go func() {
-		sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SendMode)
+		sendErr := sendEmail(appConfig.MailConfig.SmtpServer, appConfig.MailConfig.SmtpPort, appConfig.MailConfig.Username, appConfig.MailConfig.Password, appConfig.MailConfig.From, appConfig.MailConfig.To, subject, body, appConfig.MailConfig.SenderName, appConfig.MailConfig.SendMode)
 		if sendErr != nil {
 			fmt.Printf("邮件发送失败: %v\n", sendErr)
 		} else {
