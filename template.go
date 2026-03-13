@@ -649,10 +649,41 @@ func (e *Evaluator) evaluateIdentifier(node *ASTNode) interface{} {
 		return e.data.FirstRunTime
 	case "lastruntime":
 		return e.data.LastRunTime
+	case "lastrunrecord":
+		// 特殊处理lastRunRecord，直接返回全局变量
+		if globalVarGetter != nil {
+			if val := globalVarGetter("lastRunRecord"); val != nil {
+				return val
+			}
+		}
+	case "firstrunrecord":
+		// 特殊处理firstRunRecord，直接返回全局变量
+		if globalVarGetter != nil {
+			if val := globalVarGetter("firstRunRecord"); val != nil {
+				return val
+			}
+		}
+	case "runrecord":
+		// 特殊处理runRecord，直接返回全局变量
+		if globalVarGetter != nil {
+			if val := globalVarGetter("runRecord"); val != nil {
+				return val
+			}
+		}
 	default:
 		// 首先尝试通过全局变量访问器获取全局变量
 		if globalVarGetter != nil {
 			if val := globalVarGetter(name); val != nil {
+				// 特殊处理数字类型，转换为float64
+				if num, ok := val.(int); ok {
+					return float64(num)
+				}
+				return val
+			}
+			
+			// 尝试使用驼峰命名的全局变量
+			camelCaseName := name
+			if val := globalVarGetter(camelCaseName); val != nil {
 				// 特殊处理数字类型，转换为float64
 				if num, ok := val.(int); ok {
 					return float64(num)
@@ -692,13 +723,24 @@ func (e *Evaluator) evaluateIdentifier(node *ASTNode) interface{} {
 				}
 			}
 		}
-		return name
 	}
+	
+	// 默认返回变量名
+	return name
 }
 
 // evaluateMemberAccess 评估成员访问
 func (e *Evaluator) evaluateMemberAccess(node *ASTNode) interface{} {
-	base := e.Evaluate(node.Children[0])
+	// 首先尝试从Children获取基础值，如果Children为空则使用Left
+	var base interface{}
+	if len(node.Children) > 0 {
+		base = e.Evaluate(node.Children[0])
+	} else if node.Left != nil {
+		base = e.Evaluate(node.Left)
+	} else {
+		return nil
+	}
+	
 	member := node.Value
 
 	// 使用反射动态访问结构体成员
