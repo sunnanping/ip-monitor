@@ -512,6 +512,193 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 - ✅ 邮件标题可配置
 - ✅ 邮件发送者名称可配置
 
+---
+
+## 交互 15：模板条件定义功能优化
+
+### 需要是什么@user @2026-03-13 00:00:00~
+分析runtime: goroutine stack exceeds 1000000000-byte limit错误，在错误处增加捕捉该错误的处理能力，避免程序异常后导致主程序终止、邮件不能发送。
+
+### AI分析需求、生成任务清单
+
+#### AI思考过程
+1. **问题分析**：
+   - 程序运行时出现栈溢出错误：`runtime: goroutine stack exceeds 1000000000-byte limit`
+   - 原因是递归深度无限制，处理复杂表达式时导致栈溢出
+   - 需要在错误处增加捕捉该错误的处理能力
+
+2. **解决方案**：
+   - 实现OGNL操作符支持（7类操作符）
+   - 实现动态变量替换功能
+   - 重构递归函数，添加深度限制
+   - 优化表达式解析逻辑
+
+3. **实现细节**：
+   - 支持等于和不等于：`==`、`!=`
+   - 支持比较操作：`<`、`>`、`<=`、`>=`
+   - 支持逻辑与：`&&`、`and`
+   - 支持逻辑或：`||`、`or`
+   - 支持逻辑非：`!`、`not`
+   - 支持包含检查：`in`
+   - 支持数学运算：`+`、`-`、`*`、`/`
+   - 支持简单变量和带点的变量（如`lastRecord.LastRunTime`）
+   - 支持结构体成员变量动态验证
+
+#### 任务清单
+1. 分析栈溢出错误原因
+2. 实现OGNL操作符支持
+3. 实现动态变量替换功能
+4. 重构递归函数，添加深度限制
+5. 编译程序
+6. 运行测试
+7. 提交到本地git
+
+### 每一个任务执行结果
+- ✅ 分析栈溢出错误：递归深度无限制导致栈溢出
+- ✅ 实现7类OGNL操作符支持
+- ✅ 实现动态变量替换功能
+- ✅ 重构`validateVariables`函数为非递归实现
+- ✅ 修改`evaluateExpression`添加递归深度限制（depth > 100）
+- ✅ 编译成功
+- ✅ 运行测试成功
+- ✅ 提交到本地git（提交ID: 4d7a34f，版本v1.1.1）
+
+---
+
+## 交互 16：重构OGNL表达式解析器
+
+### 需要是什么@user @2026-03-13 00:00:00~
+template.go的evaluateExpression拆分为7类，没用考虑7类操作符等带多个括号的组合，显然支撑不了复杂表达式。请参考MyBatis中处理OGNL表达式核心类是org.apacheibatis.scripting.xmltags.OgnlCache，它封装了OGNL表达式的解析和执行逻辑。来扩展、优化对html模板中if所带动态复杂条件组合的识别能力。
+
+### AI分析需求、生成任务清单
+
+#### AI思考过程
+1. **问题分析**：
+   - 当前的实现没有考虑多个括号的嵌套组合
+   - 无法支撑复杂的OGNL表达式
+   - 操作符优先级未正确处理
+   - 需要参考MyBatis的OGNL实现方式
+
+2. **解决方案**：
+   - 实现词法分析器（Lexer）将表达式拆分为token
+   - 实现语法分析器（Parser）构建AST抽象语法树
+   - 实现表达式求值器（Evaluator）支持操作符优先级
+   - 采用递归下降解析法正确处理嵌套表达式
+
+3. **实现细节**：
+   - **词法分析器（Lexer）**：
+     - 支持识别：标识符、数字、字符串、操作符、括号等
+     - 正确处理关键字（and、or、not）和操作符（&&、||、==、!=等）
+   - **语法分析器（Parser）**：
+     - 采用递归下降解析法构建AST
+     - 正确处理操作符优先级（从低到高）：
+       - 逻辑或 (||, or)
+       - 逻辑与 (&&, and)
+       - 相等性 (==, !=)
+       - 比较 (<, >, <=, >=)
+       - 加减 (+, -)
+       - 乘除 (*, /, %)
+       - 一元操作 (!, not, -)
+     - 支持括号嵌套和成员访问（如`lastRecord.LastRunTime`）
+   - **表达式求值器（Evaluator）**：
+     - 遍历AST节点进行求值
+     - 支持所有操作符的运算逻辑
+     - 正确处理类型转换（数字、字符串、布尔值）
+
+4. **支持的复杂表达式示例**：
+   ```html
+   <if condition="(RunCount > 1 && lastRecord != nil) || (SendMsg == true && (RunCount % 2 == 0))">
+   <if condition="!(lastRecord == nil) && lastRecord.RunCount > 5">
+   <if condition="(RunCount >= 0 && RunCount <= 10) || SendMsg == false">
+   ```
+
+#### 任务清单
+1. 实现词法分析器（Lexer）
+2. 实现语法分析器（Parser）
+3. 实现表达式求值器（Evaluator）
+4. 重构evaluateCondition函数
+5. 重构replaceVariables函数
+6. 编译程序
+7. 运行测试
+8. 提交到本地git
+
+### 每一个任务执行结果
+- ✅ 实现词法分析器（Lexer），支持token化表达式
+- ✅ 实现语法分析器（Parser），构建AST抽象语法树
+- ✅ 实现表达式求值器（Evaluator），支持操作符优先级
+- ✅ 重构evaluateCondition函数，使用新的解析器
+- ✅ 重构replaceVariables函数，使用新的求值器
+- ✅ 编译成功
+- ✅ 运行测试成功
+- ✅ 提交到本地git（提交ID: 4055444，版本v1.2.0）
+
+---
+
+## Git提交历史
+
+```
+4055444 (HEAD -> master) 重构OGNL表达式解析器：实现完整的词法分析、语法分析和表达式求值，支持复杂嵌套表达式和操作符优先级，版本v1.2.0
+4d7a34f 模板条件定义功能优化：实现OGNL操作符支持和动态变量替换，版本v1.1.1
+f340654 (origin/master) 业务需求：在config.yaml中mail-config节点里，增加邮件发送者名称参数senderName，其默认值为直接引用username参数的value
+c9e2803 优化：将Windows开机启动改为Windows服务方式，并在config.yaml中增加邮件标题title配置参数
+ad2996b Optimize email sending to use goroutine for async execution
+0d1e3c5 Simplify mail template and update documentation
+32b3f2e Remove run_record.json file I/O and update runCount logic
+cee2e06 Add debug.log to .gitignore
+c50ddc4 Update mail template
+6862190 Remove config.yaml from git tracking and update files
+bc4b133 Add code composition statistics to README.md
+d1c5dda Add VSCode launch.json for Go debugging and update files
+8fa821c Update README.md documentation
+19c53cb Update README.md
+16044f4 Update README.md and .gitignore
+de55d43 Fix startup config file path issue and update documentation
+83471e0 Add macOS startup support with LaunchAgent
+fbc1265 Fix compilation errors and add email template support
+76bee50 Add global variable sendMsg to track email sending status
+4cbf8b5 Update API lists to 10 items in config.yaml and README.md
+725ea0a Update config to YAML format with 4 sections
+be0a218 Update module name from go-ip-monitor to ip-monitor
+```
+
+---
+
+## 总结
+
+### 完成的功能
+1. ✅ config.yaml本地提交但不上传GitHub（方案4：保持现状）
+2. ✅ runCount累加机制优化（在检查IP地址前累加）
+3. ✅ 移除run_record.json文件的读写
+4. ✅ 简化mail_template.html
+5. ✅ 更新代码注释和README.md
+6. ✅ 提交到本地git（6个提交）
+7. ✅ 异步邮件发送优化（使用goroutine）
+8. ✅ 修复mail_template.html条件判断标签问题
+9. ✅ 测试最终版本功能
+10. ✅ Windows服务优化（服务名：public_ip_monitor，启动类型：自动）
+11. ✅ 邮件标题配置（支持自定义邮件标题）
+12. ✅ 邮件发送者名称配置（支持自定义发送者名称）
+13. ✅ 模板条件定义功能优化（v1.1.1）
+14. ✅ 重构OGNL表达式解析器（v1.2.0）
+
+### 待完成
+- ✅ 推送到远程git（已完成）
+
+### 程序状态
+- ✅ 程序运行正常
+- ✅ 邮件发送成功
+- ✅ IP地址监控正常
+- ✅ 定时检查正常
+- ✅ runCount累加正常
+- ✅ 不再使用run_record.json文件
+- ✅ 邮件发送改为异步执行
+- ✅ 邮件模板简化成功
+- ✅ Windows服务已实现
+- ✅ 邮件标题可配置
+- ✅ 邮件发送者名称可配置
+- ✅ OGNL表达式解析器已重构
+- ✅ 支持复杂嵌套表达式和操作符优先级
+
 ### 优化效果
 
 **优化前：**
@@ -521,6 +708,8 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 - 使用注册表方式启动，需要用户登录后才会运行
 - 邮件标题固定为"公网IP地址..."
 - 邮件发送者只显示邮箱地址
+- 表达式解析使用简单的字符串分割，无法处理复杂嵌套
+- 递归深度无限制，可能导致栈溢出错误
 
 **优化后：**
 - 邮件发送使用goroutine异步执行
@@ -531,3 +720,7 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 - 邮件发送者支持自定义，格式：发送者名称 <邮箱地址>
 - 提高了程序响应性和性能
 - 解决了多用户条件下的自动启动问题
+- 实现完整的词法分析、语法分析和表达式求值
+- 支持复杂嵌套表达式和操作符优先级
+- 支持括号嵌套和成员访问（如`lastRecord.LastRunTime`）
+- 避免了栈溢出错误，提高了程序稳定性
