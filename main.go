@@ -52,7 +52,8 @@ type Config struct {
 
 // RunRecord 运行记录
 type RunRecord struct {
-	LastRunTime string `json:"last_run_time"` // 上一次运行时间
+	LastRunTime string `json:"last_run_time"` // 上一次运行时间，如果为空则表示第一次运行
+	CurrRunTime string `json:"curr_run_time"` // 当前运行时间
 	IPv4        string `json:"ipv4"`          // IPv4地址
 	IPv6        string `json:"ipv6"`          // IPv6地址
 	EmailSent   bool   `json:"email_sent"`    // 是否发送了邮件
@@ -62,17 +63,19 @@ type RunRecord struct {
 
 // 全局变量存储缓存的IP地址和运行信息
 var (
-	cachedIPv4   string     // 缓存的IPv4地址
-	cachedIPv6   string     // 缓存的IPv6地址
-	appConfig    *Config    // 配置信息
-	runRecord    *RunRecord // 运行记录
-	programPID   int        // 程序进程ID
-	runCount     int        // 累计运行次数
-	firstRunTime string     // 第一次运行时间（程序启动时间）
-	lastRunTime  string     // 上一次运行时间（每次检查IP地址时更新）
-	sendMsg      bool       // 是否发送了邮件
-	execPath     string     // 程序路径
-	execDir      string     // 程序所在目录（用于确保开机启动时能正确读取配置文件）
+	programPID     int        // 程序进程ID
+	execPath       string     // 程序路径
+	execDir        string     // 程序所在目录（用于确保开机启动时能正确读取配置文件）
+	runCount       int        // 累计运行次数
+	cachedIPv4     string     // 缓存的IPv4地址
+	cachedIPv6     string     // 缓存的IPv6地址
+	appConfig      *Config    // 配置信息
+	firstRunRecord RunRecord  // 运行记录，用来记录首次运行的数据
+	lastRunRecord  RunRecord  // 运行记录，用来记录上一次运行的数据
+	runRecord      *RunRecord // 运行记录，用来记录本次运行之后的数据
+	firstRunTime   string     // 第一次运行时间（程序启动时间）
+	lastRunTime    string     // 上一次运行时间（每次检查IP地址时更新）
+	sendMsg        bool       // 是否发送了邮件
 )
 
 // loadConfig 加载配置文件
@@ -457,6 +460,15 @@ func checkIPChanges() {
 
 	runCount++
 
+	// 第二次以及其后多次检测地址之前，lastRunRecord均拷贝runRecord的数据
+	if runRecord != nil {
+		lastRunRecord = *runRecord
+		// 如果lastRunRecord成员LastRunTime数据为空则拷贝runRecord的CurrRunTime数据
+		if lastRunRecord.LastRunTime == "" {
+			lastRunRecord.LastRunTime = runRecord.CurrRunTime
+		}
+	}
+
 	// 获取可执行文件所在目录
 	var err error
 	execPath, err = getExecutablePath()
@@ -512,7 +524,8 @@ func checkIPChanges() {
 	// 创建运行记录
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
 	record := &RunRecord{
-		LastRunTime: currentTime,
+		LastRunTime: "", // 检测地址完成后，用lastRunRecord成员CurrRunTime数据赋值给runRecord成员LastRunTime
+		CurrRunTime: currentTime,
 		IPv4:        currentIPv4,
 		IPv6:        currentIPv6,
 		EmailSent:   false,
@@ -545,7 +558,7 @@ func checkIPChanges() {
 				LastRunTime:  lastRunTime,
 				RunCount:     runCount,
 				SendMsg:      sendMsg,
-				LastRecord:   runRecord, // 已废弃，保留用于兼容性
+				LastRecord:   &lastRunRecord,
 				CurrentTime:  currentTime,
 				CurrentIPv4:  currentIPv4,
 				CurrentIPv6:  currentIPv6,
@@ -584,11 +597,16 @@ func checkIPChanges() {
 		record.EmailResult = "未发送（IP地址未变化）"
 	}
 
-	// 更新上一次运行时间
-	lastRunTime = currentTime
-
 	// 更新全局运行记录
 	runRecord = record
+
+	// 用lastRunRecord成员CurrRunTime数据赋值给runRecord成员LastRunTime
+	if lastRunRecord.CurrRunTime != "" {
+		runRecord.LastRunTime = lastRunRecord.CurrRunTime
+	}
+
+	// 更新上一次运行时间
+	lastRunTime = currentTime
 }
 
 // getExecutablePath 获取当前可执行文件的完整路径
@@ -792,9 +810,6 @@ loop:
 
 // initializeMonitoring 初始化监控逻辑
 func initializeMonitoring() {
-	// 不再读取run_record.json文件，每次启动都是全新运行
-	runRecord = nil
-
 	// 初始化运行次数和运行时间
 	runCount = 0
 	firstRunTime = ""
@@ -833,9 +848,20 @@ func initializeMonitoring() {
 	}
 	subject := fmt.Sprintf("%s - 初始通知 - %s", title, currentTime)
 
-	if runRecord == nil {
-		firstRunTime = currentTime
+	// 初始化firstRunRecord和runRecord
+	firstRunTime = currentTime
+	firstRunRecord = RunRecord{
+		LastRunTime: "", // 第一次运行时LastRunTime为空
+		CurrRunTime: currentTime,
+		IPv4:        cachedIPv4,
+		IPv6:        cachedIPv6,
+		EmailSent:   false,
+		EmailResult: "",
+		RunCount:    0,
 	}
+
+	// 第一次运行时，runRecord与firstRunRecord相同
+	runRecord = &firstRunRecord
 
 	var body string
 
@@ -846,7 +872,7 @@ func initializeMonitoring() {
 		LastRunTime:  lastRunTime,
 		RunCount:     runCount,
 		SendMsg:      sendMsg,
-		LastRecord:   runRecord,
+		LastRecord:   &lastRunRecord,
 		CurrentTime:  currentTime,
 		CurrentIPv4:  cachedIPv4,
 		CurrentIPv6:  cachedIPv6,
@@ -1150,9 +1176,6 @@ func runApplication() {
 	// 获取可执行文件所在目录
 	execDir = filepath.Dir(execPath)
 
-	// 不再读取run_record.json文件，每次启动都是全新运行
-	runRecord = nil
-
 	// 初始化运行次数和运行时间
 	runCount = 0
 	firstRunTime = ""
@@ -1161,7 +1184,7 @@ func runApplication() {
 	sendMsg = false
 
 	// 输出上一次运行日志（首次运行时显示提示信息）
-	printLastRunLog(runRecord)
+	printLastRunLog(&lastRunRecord)
 
 	// 获取程序路径和进程ID
 	execPath, err = getExecutablePath()
@@ -1202,9 +1225,20 @@ func runApplication() {
 	}
 	subject := fmt.Sprintf("%s - 初始通知 - %s", title, currentTime)
 
-	if runRecord == nil {
-		firstRunTime = currentTime
+	// 初始化firstRunRecord和lastRunRecord
+	firstRunTime = currentTime
+	firstRunRecord = RunRecord{
+		LastRunTime: "", // 第一次运行时LastRunTime为空
+		CurrRunTime: currentTime,
+		IPv4:        cachedIPv4,
+		IPv6:        cachedIPv6,
+		EmailSent:   false,
+		EmailResult: "",
+		RunCount:    0,
 	}
+
+	// 第一次运行时，runRecord与firstRunRecord相同
+	runRecord = &firstRunRecord
 
 	var body string
 
@@ -1215,7 +1249,7 @@ func runApplication() {
 		LastRunTime:  lastRunTime,
 		RunCount:     runCount,
 		SendMsg:      sendMsg,
-		LastRecord:   runRecord, // 已废弃，保留用于兼容性
+		LastRecord:   &lastRunRecord,
 		CurrentTime:  currentTime,
 		CurrentIPv4:  cachedIPv4,
 		CurrentIPv6:  cachedIPv6,

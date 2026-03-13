@@ -613,26 +613,29 @@ func (e *Evaluator) evaluateLiteral(node *ASTNode) interface{} {
 func (e *Evaluator) evaluateIdentifier(node *ASTNode) interface{} {
 	name := node.Value
 
-	switch name {
-	case "RunCount":
+	// 统一转换为小写进行匹配（支持大小写不敏感）
+	lowerName := strings.ToLower(name)
+
+	switch lowerName {
+	case "runcount":
 		return float64(e.data.RunCount)
-	case "sendMsg", "SendMsg":
+	case "sendmsg":
 		return e.data.SendMsg
-	case "lastRecord":
+	case "lastrecord":
 		return e.data.LastRecord
-	case "currentTime":
+	case "currenttime":
 		return e.data.CurrentTime
-	case "currentIPv4":
+	case "currentipv4":
 		return e.data.CurrentIPv4
-	case "currentIPv6":
+	case "currentipv6":
 		return e.data.CurrentIPv6
-	case "execPath":
+	case "execpath":
 		return e.data.ExecPath
-	case "programPID":
+	case "programpid":
 		return float64(e.data.ProgramPID)
-	case "firstRunTime":
+	case "firstruntime":
 		return e.data.FirstRunTime
-	case "lastRunTime":
+	case "lastruntime":
 		return e.data.LastRunTime
 	default:
 		return name
