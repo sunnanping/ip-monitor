@@ -552,11 +552,15 @@ func checkIPChanges() {
 			}
 
 			var err error
+			var undefinedVariables []string
 			templatePath := filepath.Join(execDir, "mail_template.html")
-			body, err = renderMailTemplate(templatePath, templateData)
+			body, undefinedVariables, err = renderMailTemplate(templatePath, templateData)
 			if err != nil {
 				fmt.Printf("渲染邮件模板失败: %v\n", err)
 				body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s", changeDetails, currentTime)
+			} else if len(undefinedVariables) > 0 {
+				fmt.Printf("邮件模板中存在未定义变量: %v\n", undefinedVariables)
+				body = fmt.Sprintf("检测到公网IP地址发生变更:\n\n%s\n\n检测时间: %s\n\n模板警告: 存在未定义变量 %v", changeDetails, currentTime, undefinedVariables)
 			}
 			fmt.Println("检测到IP地址变化，准备发送邮件通知...")
 		}
@@ -849,9 +853,13 @@ func initializeMonitoring() {
 	}
 
 	templatePath := filepath.Join(execDir, "mail_template.html")
-	body, err = renderMailTemplate(templatePath, templateData)
+	var undefinedVariables []string
+	body, undefinedVariables, err = renderMailTemplate(templatePath, templateData)
 	if err != nil {
 		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
+	} else if len(undefinedVariables) > 0 {
+		fmt.Printf("邮件模板中存在未定义变量: %v\n", undefinedVariables)
+		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s\n\n模板警告: 存在未定义变量 %v", cachedIPv4, cachedIPv6, undefinedVariables)
 	}
 
 	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
@@ -1214,10 +1222,14 @@ func runApplication() {
 	}
 
 	templatePath := filepath.Join(execDir, "mail_template.html")
-	body, err = renderMailTemplate(templatePath, templateData)
+	var undefinedVariables []string
+	body, undefinedVariables, err = renderMailTemplate(templatePath, templateData)
 	if err != nil {
 		fmt.Printf("渲染邮件模板失败: %v\n", err)
 		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s", cachedIPv4, cachedIPv6)
+	} else if len(undefinedVariables) > 0 {
+		fmt.Printf("邮件模板中存在未定义变量: %v\n", undefinedVariables)
+		body = fmt.Sprintf("首次运行，发送初始IP地址通知\n\nIPv4: %s\nIPv6: %s\n\n模板警告: 存在未定义变量 %v", cachedIPv4, cachedIPv6, undefinedVariables)
 	}
 
 	// 使用goroutine异步发送初始邮件，避免阻塞程序启动
