@@ -582,6 +582,9 @@ func checkIPChanges() {
 
 	// 更新上一次运行时间
 	lastRunTime = currentTime
+
+	// 更新全局运行记录
+	runRecord = record
 }
 
 // getExecutablePath 获取当前可执行文件的完整路径
