@@ -2,7 +2,7 @@
 
 ## 交互 1：config.yaml本地提交但不上传GitHub
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 在本地git上提交config.yaml，但不提交到GitHub上
 
 ### AI分析需求、生成任务清单
@@ -22,7 +22,7 @@
 
 ## 交互 2：运行程序测试
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 运行程序测试功能
 
 ### AI分析需求、生成任务清单
@@ -44,7 +44,7 @@
 
 ## 交互 3：修改runCount累加机制
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 runCount累加机制，需要在运行检查ip地址之前累加
 
 ### AI分析需求、生成任务清单
@@ -68,7 +68,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 4：运行程序测试runCount
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 运行程序测试runCount累加机制
 
 ### AI分析需求、生成任务清单
@@ -88,7 +88,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 5：不记录到run_record.json
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 不用记录到run_record.json文件中
 
 ### AI分析需求、生成任务清单
@@ -110,7 +110,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 6：不读取run_record.json
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 也不用读取run_record.json日志文件
 
 ### AI分析需求、生成任务清单
@@ -136,7 +136,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 7：更新代码注释和README.md
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 根据需求，更新代码批注、readme.md；然后提交本地git、远程git
 
 ### AI分析需求、生成任务清单
@@ -160,7 +160,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 8：简化mail_template.html
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 根据需求，更新代码批注、readme.md；然后提交本地git、远程git
 
 ### AI分析需求、生成任务清单
@@ -193,7 +193,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 9：运行程序测试
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 运行程序
 
 ### AI分析需求、生成任务清单
@@ -218,7 +218,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 10：异步邮件发送优化
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 需求优化：为了避免邮件发送串行累计耗时，超过定时任务间隔，需要将"邮件发送"功能通过routine方式来实现。
 
 ### AI分析需求、生成任务清单
@@ -269,7 +269,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 11：修复mail_template.html
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 运行程序
 
 ### AI分析需求、生成任务清单
@@ -307,7 +307,7 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ## 交互 12：运行程序测试最终版本
 
-### 需要是什么
+### 需要是什么@user @2026-02-08 00:00:00~
 运行程序
 
 ### AI分析需求、生成任务清单
@@ -329,10 +329,136 @@ runCount累加机制，需要在运行检查ip地址之前累加
 
 ---
 
+## 交互 13：Windows服务优化和邮件标题配置
+
+### 需要是什么@user @2026-02-08 00:00:00~
+1. 将addToWindowsStartup优化为Windows服务方式
+2. 在config.yaml中mail-config节点里，增加邮件标题title的配置参数，默认值为"公网ip地址监测"
+
+### AI分析需求、生成任务清单
+
+#### AI思考过程
+1. **问题分析**：
+   - 当前使用注册表方式添加到开机启动，需要用户登录后才会运行
+   - 多用户条件下，需要登录Windows账号才能加载启动菜单中的程序
+   - 需要改为Windows服务方式，实现系统级别的自动启动
+
+2. **解决方案**：
+   - 使用Windows服务替代注册表启动方式
+   - 服务名称：public_ip_monitor
+   - 启动类型：自动
+   - 添加邮件标题配置参数，支持自定义邮件标题
+
+3. **实现细节**：
+   - 添加installWindowsService函数安装Windows服务
+   - 添加startWindowsService函数启动Windows服务
+   - 添加uninstallWindowsService函数卸载Windows服务
+   - 添加isWindowsServiceInstalled函数检查服务是否已安装
+   - 添加ipMonitorService结构体实现Windows服务接口
+   - 添加initializeMonitoring函数初始化监控逻辑
+   - 修改main函数支持服务模式和应用程序模式
+   - 修改MailConfig结构体增加Title字段
+   - 修改邮件标题生成逻辑使用配置的title参数
+
+4. **注意事项**：
+   - Windows服务需要管理员权限才能安装
+   - 邮件标题格式：[配置的title] - [通知类型] - [时间]
+   - 支持自定义邮件标题，默认值为"公网ip地址监测"
+
+#### 任务清单
+1. 在config.yaml中增加title配置参数
+2. 修改MailConfig结构体，增加Title字段
+3. 添加Windows服务相关函数
+4. 修改main函数支持服务模式
+5. 修改邮件标题生成逻辑
+6. 编译程序
+7. 测试Windows服务安装
+8. 提交到本地git
+9. 推送到GitHub
+
+### 每一个任务执行结果
+- ✅ 在config.yaml中添加title: "公网ip地址监测"
+- ✅ 修改MailConfig结构体，增加Title字段
+- ✅ 添加installWindowsService函数（服务名：public_ip_monitor，启动类型：自动）
+- ✅ 添加startWindowsService函数
+- ✅ 添加uninstallWindowsService函数
+- ✅ 添加isWindowsServiceInstalled函数
+- ✅ 添加ipMonitorService结构体实现Windows服务接口
+- ✅ 添加initializeMonitoring函数初始化监控逻辑
+- ✅ 修改main函数，支持服务模式和应用程序模式
+- ✅ 修改邮件标题生成逻辑，使用配置的title参数
+- ✅ 编译成功
+- ✅ 测试发现需要管理员权限安装服务
+- ✅ 提交到本地git（提交ID: c9e2803）
+- ✅ 推送到GitHub成功
+
+---
+
+## 交互 14：邮件发送者名称配置
+
+### 需要是什么@user @2026-02-08 00:00:00~
+在config.yaml中mail-config节点里，增加邮件发送者名称参数senderName，其默认值为直接引用username参数的value
+
+### AI分析需求、生成任务清单
+
+#### AI思考过程
+1. **问题分析**：
+   - 当前邮件发送者只显示邮箱地址
+   - 需要支持自定义发送者名称
+   - 如果未配置senderName，应该使用username作为默认值
+
+2. **解决方案**：
+   - 在config.yaml中添加sender_name参数
+   - 修改MailConfig结构体增加SenderName字段
+   - 修改sendEmail函数，增加senderName参数
+   - 在邮件头中使用"发送者名称 <邮箱地址>"格式
+   - 如果senderName为空，使用username作为默认值
+
+3. **实现细节**：
+   - 邮件头格式：`From: 发送者名称 <邮箱地址>`
+   - 增加发件人名称的日志输出
+   - 更新所有调用sendEmail的地方
+   - 支持自定义邮件发送者名称，提升邮件专业性
+
+4. **注意事项**：
+   - 默认值处理：如果senderName未配置，自动使用username
+   - 邮件格式优化：发件人显示为"发送者名称 <邮箱地址>"
+   - 需要更新3处sendEmail调用
+
+#### 任务清单
+1. 在config.yaml中添加sender_name参数
+2. 修改MailConfig结构体，增加SenderName字段
+3. 修改sendEmail函数，增加senderName参数
+4. 修改邮件头格式，使用"发送者名称 <邮箱地址>"
+5. 更新所有sendEmail调用
+6. 编译程序
+7. 运行测试
+8. 提交到本地git
+9. 推送到GitHub
+
+### 每一个任务执行结果
+- ✅ 在config.yaml中添加sender_name: "sunnanping"
+- ✅ 修改MailConfig结构体，增加SenderName字段
+- ✅ 修改sendEmail函数，增加senderName参数
+- ✅ 添加默认值处理：如果senderName为空，使用username
+- ✅ 修改邮件头格式：headers["From"] = fmt.Sprintf("%s <%s>", senderName, from)
+- ✅ 增加发件人名称的日志输出
+- ✅ 更新checkIPChanges中的sendEmail调用（566行）
+- ✅ 更新initializeMonitoring中的sendEmail调用（856行）
+- ✅ 更新runApplication中的sendEmail调用（1222行）
+- ✅ 编译成功
+- ✅ 运行测试成功
+- ✅ 提交到本地git（提交ID: f340654）
+- ✅ 推送到GitHub成功
+
+---
+
 ## Git提交历史
 
 ```
-ad2996b (HEAD -> master, origin/master) Optimize email sending to use goroutine for async execution
+f340654 (HEAD -> master, origin/master) 业务需求：在config.yaml中mail-config节点里，增加邮件发送者名称参数senderName，其默认值为直接引用username参数的value
+c9e2803 优化：将Windows开机启动改为Windows服务方式，并在config.yaml中增加邮件标题title配置参数
+ad2996b Optimize email sending to use goroutine for async execution
 0d1e3c5 Simplify mail template and update documentation
 32b3f2e Remove run_record.json file I/O and update runCount logic
 cee2e06 Add debug.log to .gitignore
@@ -366,6 +492,9 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 7. ✅ 异步邮件发送优化（使用goroutine）
 8. ✅ 修复mail_template.html条件判断标签问题
 9. ✅ 测试最终版本功能
+10. ✅ Windows服务优化（服务名：public_ip_monitor，启动类型：自动）
+11. ✅ 邮件标题配置（支持自定义邮件标题）
+12. ✅ 邮件发送者名称配置（支持自定义发送者名称）
 
 ### 待完成
 - ✅ 推送到远程git（已完成）
@@ -379,6 +508,9 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 - ✅ 不再使用run_record.json文件
 - ✅ 邮件发送改为异步执行
 - ✅ 邮件模板简化成功
+- ✅ Windows服务已实现
+- ✅ 邮件标题可配置
+- ✅ 邮件发送者名称可配置
 
 ### 优化效果
 
@@ -386,9 +518,16 @@ be0a218 Update module name from go-ip-monitor to ip-monitor
 - 邮件发送是同步执行，会阻塞定时任务
 - 如果邮件发送时间较长，可能会超过定时任务间隔
 - 邮件模板包含复杂的条件判断标签
+- 使用注册表方式启动，需要用户登录后才会运行
+- 邮件标题固定为"公网IP地址..."
+- 邮件发送者只显示邮箱地址
 
 **优化后：**
 - 邮件发送使用goroutine异步执行
 - 定时任务立即启动，不受邮件发送影响
 - 邮件模板简化，只显示必要信息
+- 使用Windows服务方式，系统启动时自动运行，无需登录
+- 邮件标题支持自定义，格式：[配置的title] - [通知类型] - [时间]
+- 邮件发送者支持自定义，格式：发送者名称 <邮箱地址>
 - 提高了程序响应性和性能
+- 解决了多用户条件下的自动启动问题
