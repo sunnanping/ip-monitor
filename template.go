@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -497,6 +498,17 @@ type Evaluator struct {
 	data *TemplateData
 }
 
+// 全局变量访问函数类型
+type GlobalVarGetter func(name string) interface{}
+
+// 全局变量访问器实例
+var globalVarGetter GlobalVarGetter
+
+// SetGlobalVarGetter 设置全局变量访问器
+func SetGlobalVarGetter(getter GlobalVarGetter) {
+	globalVarGetter = getter
+}
+
 // NewEvaluator 创建新的求值器
 func NewEvaluator(data *TemplateData) *Evaluator {
 	return &Evaluator{data: data}
@@ -638,6 +650,48 @@ func (e *Evaluator) evaluateIdentifier(node *ASTNode) interface{} {
 	case "lastruntime":
 		return e.data.LastRunTime
 	default:
+		// 首先尝试通过全局变量访问器获取全局变量
+		if globalVarGetter != nil {
+			if val := globalVarGetter(name); val != nil {
+				// 特殊处理数字类型，转换为float64
+				if num, ok := val.(int); ok {
+					return float64(num)
+				}
+				return val
+			}
+		}
+		
+		// 然后尝试使用反射动态访问TemplateData中的字段
+		v := reflect.ValueOf(e.data)
+		if v.Kind() == reflect.Struct {
+			// 尝试直接通过字段名访问（区分大小写）
+			field := v.FieldByName(name)
+			if field.IsValid() && field.CanInterface() {
+				val := field.Interface()
+				// 特殊处理数字类型，转换为float64
+				if num, ok := val.(int); ok {
+					return float64(num)
+				}
+				return val
+			}
+			
+			// 尝试不区分大小写匹配字段名
+			for i := 0; i < v.NumField(); i++ {
+				fieldName := v.Type().Field(i).Name
+				if strings.EqualFold(fieldName, name) {
+					field := v.Field(i)
+					if field.CanInterface() {
+						val := field.Interface()
+						// 特殊处理数字类型
+						if num, ok := val.(int); ok {
+							return float64(num)
+						}
+						return val
+					}
+					break
+				}
+			}
+		}
 		return name
 	}
 }
@@ -647,22 +701,47 @@ func (e *Evaluator) evaluateMemberAccess(node *ASTNode) interface{} {
 	base := e.Evaluate(node.Children[0])
 	member := node.Value
 
-	if record, ok := base.(*RunRecord); ok && record != nil {
-		switch member {
-		case "LastRunTime":
-			return record.LastRunTime
-		case "IPv4":
-			return record.IPv4
-		case "IPv6":
-			return record.IPv6
-		case "EmailSent":
-			return record.EmailSent
-		case "EmailResult":
-			return record.EmailResult
-		case "RunCount":
-			return float64(record.RunCount)
-		default:
-			return nil
+	// 使用反射动态访问结构体成员
+	if base != nil {
+		v := reflect.ValueOf(base)
+		
+		// 处理指针类型
+		if v.Kind() == reflect.Ptr {
+			if v.IsNil() {
+				return nil
+			}
+			v = v.Elem()
+		}
+		
+		// 确保是结构体类型
+		if v.Kind() == reflect.Struct {
+			// 尝试直接通过字段名访问（区分大小写）
+			field := v.FieldByName(member)
+			if field.IsValid() && field.CanInterface() {
+				val := field.Interface()
+				// 特殊处理数字类型，转换为float64
+				if num, ok := val.(int); ok {
+					return float64(num)
+				}
+				return val
+			}
+			
+			// 尝试不区分大小写匹配字段名
+			for i := 0; i < v.NumField(); i++ {
+				fieldName := v.Type().Field(i).Name
+				if strings.EqualFold(fieldName, member) {
+					field := v.Field(i)
+					if field.CanInterface() {
+						val := field.Interface()
+						// 特殊处理数字类型
+						if num, ok := val.(int); ok {
+							return float64(num)
+						}
+						return val
+					}
+					break
+				}
+			}
 		}
 	}
 

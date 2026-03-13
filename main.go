@@ -78,6 +78,40 @@ var (
 	sendMsg        bool       // 是否发送了邮件
 )
 
+// setupGlobalVarGetter 设置全局变量访问器
+func setupGlobalVarGetter() {
+	SetGlobalVarGetter(func(name string) interface{} {
+		switch name {
+		case "programPID":
+			return programPID
+		case "execPath":
+			return execPath
+		case "execDir":
+			return execDir
+		case "runCount":
+			return runCount
+		case "cachedIPv4":
+			return cachedIPv4
+		case "cachedIPv6":
+			return cachedIPv6
+		case "firstRunRecord":
+			return &firstRunRecord
+		case "lastRunRecord":
+			return &lastRunRecord
+		case "runRecord":
+			return runRecord
+		case "firstRunTime":
+			return firstRunTime
+		case "lastRunTime":
+			return lastRunTime
+		case "sendMsg":
+			return sendMsg
+		default:
+			return nil
+		}
+	})
+}
+
 // loadConfig 加载配置文件
 // filePath: 配置文件的完整路径
 func loadConfig(filePath string) (*Config, error) {
@@ -1164,6 +1198,9 @@ func runApplication() {
 			os.Exit(0)
 		}
 	}
+
+	// 设置全局变量访问器
+	setupGlobalVarGetter()
 
 	// 检查并添加到开机启动
 	fmt.Println("检查Windows服务状态...")
