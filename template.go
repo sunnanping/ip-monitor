@@ -46,16 +46,32 @@ func validateVariables(expression string, data *TemplateData) ([]string, error) 
 		expression = expression[:start] + "valid" + expression[end+1:]
 	}
 
-	// 处理OR操作符
+	// 处理逻辑或操作符 (||, or)
+	if strings.Contains(expression, " || ") {
+		parts := strings.Split(expression, " || ")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			undefined, err := validateVariables(part, data)
+			if err != nil {
+				return undefined, err
+			}
+			if len(undefined) > 0 {
+				return undefined, nil
+			}
+		}
+		return nil, nil
+	}
 	if strings.Contains(expression, " or ") {
-		// 分割OR操作符
 		parts := strings.Split(expression, " or ")
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
 			}
-			undefined, err := validateSingleExpression(part, data)
+			undefined, err := validateVariables(part, data)
 			if err != nil {
 				return undefined, err
 			}
@@ -66,16 +82,15 @@ func validateVariables(expression string, data *TemplateData) ([]string, error) 
 		return nil, nil
 	}
 
-	// 处理AND操作符
-	if strings.Contains(expression, " and ") {
-		// 分割AND操作符
-		parts := strings.Split(expression, " and ")
+	// 处理逻辑与操作符 (&&, and)
+	if strings.Contains(expression, " && ") {
+		parts := strings.Split(expression, " && ")
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
 			}
-			undefined, err := validateSingleExpression(part, data)
+			undefined, err := validateVariables(part, data)
 			if err != nil {
 				return undefined, err
 			}
@@ -84,6 +99,33 @@ func validateVariables(expression string, data *TemplateData) ([]string, error) 
 			}
 		}
 		return nil, nil
+	}
+	if strings.Contains(expression, " and ") {
+		parts := strings.Split(expression, " and ")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			undefined, err := validateVariables(part, data)
+			if err != nil {
+				return undefined, err
+			}
+			if len(undefined) > 0 {
+				return undefined, nil
+			}
+		}
+		return nil, nil
+	}
+
+	// 处理逻辑非操作符 (!, not)
+	if strings.HasPrefix(strings.TrimSpace(expression), "!") {
+		innerExpr := strings.TrimSpace(expression[1:])
+		return validateVariables(innerExpr, data)
+	}
+	if strings.HasPrefix(strings.TrimSpace(expression), "not ") {
+		innerExpr := strings.TrimSpace(expression[4:])
+		return validateVariables(innerExpr, data)
 	}
 
 	// 处理单个表达式
@@ -103,6 +145,24 @@ func validateVariables(expression string, data *TemplateData) ([]string, error) 
 func validateSingleExpression(expression string, data *TemplateData) ([]string, error) {
 	// 移除空格以简化解析
 	expression = strings.ReplaceAll(expression, " ", "")
+
+	// 处理包含检查操作符 (in)
+	if strings.Contains(expression, "in") {
+		parts := strings.Split(expression, "in")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("包含检查操作格式错误: %s", expression)
+		}
+
+		left := parts[0]
+
+		// 验证左侧变量
+		if !isValidVariableWithDot(left) {
+			return []string{left}, nil
+		}
+
+		// 右侧是值列表，不需要验证变量
+		return nil, nil
+	}
 
 	// 处理比较操作
 	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
@@ -126,6 +186,32 @@ func validateSingleExpression(expression string, data *TemplateData) ([]string, 
 				if !isValidVariableWithDot(right) {
 					return []string{right}, nil
 				}
+			}
+
+			return nil, nil
+		}
+	}
+
+	// 处理数学运算
+	mathOperators := []string{"+", "-", "*", "/"}
+	for _, op := range mathOperators {
+		if strings.Contains(expression, op) {
+			parts := strings.Split(expression, op)
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("数学运算格式错误: %s", expression)
+			}
+
+			left := parts[0]
+			right := parts[1]
+
+			// 验证左侧变量
+			if !isNumber(left) && !isValidVariableWithDot(left) {
+				return []string{left}, nil
+			}
+
+			// 验证右侧变量
+			if !isNumber(right) && !isValidVariableWithDot(right) {
+				return []string{right}, nil
 			}
 
 			return nil, nil
@@ -318,7 +404,7 @@ func evaluateCondition(condition string, data *TemplateData) (bool, []string, er
 	return result, nil, nil
 }
 
-// evaluateExpression 评估复杂表达式，支持and、or操作符和括号组合
+// evaluateExpression 评估复杂表达式，支持OGNL操作符
 // 参数:
 //
 //	expression: 表达式字符串
@@ -344,29 +430,60 @@ func evaluateExpression(expression string, data *TemplateData) bool {
 		// 替换括号为结果
 		expression = expression[:start] + strconv.FormatBool(result) + expression[end+1:]
 	}
+	fmt.Printf("评估复杂表达式:%s\n", expression)
 
-	// 处理OR操作符
+	// 处理逻辑或操作符 (||, or)
+	if strings.Contains(expression, " || ") {
+		parts := strings.Split(expression, " || ")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if evaluateExpression(part, data) {
+				return true
+			}
+		}
+		return false
+	}
 	if strings.Contains(expression, " or ") {
 		parts := strings.Split(expression, " or ")
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
-			if evaluateSingleExpressionForEval(part, data) {
+			if evaluateExpression(part, data) {
 				return true
 			}
 		}
 		return false
 	}
 
-	// 处理AND操作符
-	if strings.Contains(expression, " and ") {
-		parts := strings.Split(expression, " and ")
+	// 处理逻辑与操作符 (&&, and)
+	if strings.Contains(expression, " && ") {
+		parts := strings.Split(expression, " && ")
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
-			if !evaluateSingleExpressionForEval(part, data) {
+			if !evaluateExpression(part, data) {
 				return false
 			}
 		}
 		return true
+	}
+	if strings.Contains(expression, " and ") {
+		parts := strings.Split(expression, " and ")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if !evaluateExpression(part, data) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// 处理逻辑非操作符 (!, not)
+	if strings.HasPrefix(strings.TrimSpace(expression), "!") {
+		innerExpr := strings.TrimSpace(expression[1:])
+		return !evaluateExpression(innerExpr, data)
+	}
+	if strings.HasPrefix(strings.TrimSpace(expression), "not ") {
+		innerExpr := strings.TrimSpace(expression[4:])
+		return !evaluateExpression(innerExpr, data)
 	}
 
 	// 处理单个表达式
@@ -386,6 +503,30 @@ func evaluateSingleExpressionForEval(expression string, data *TemplateData) bool
 	// 移除空格以简化解析
 	expression = strings.ReplaceAll(expression, " ", "")
 
+	// 处理包含检查操作符 (in)
+	if strings.Contains(expression, "in") {
+		parts := strings.Split(expression, "in")
+		if len(parts) != 2 {
+			return false
+		}
+
+		left := parts[0]
+		right := parts[1]
+
+		// 解析右侧的数组或集合
+		// 简单处理，假设右侧是逗号分隔的值列表
+		values := strings.Split(right, ",")
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			// 移除引号
+			value = strings.Trim(value, `"'`)
+			if left == value {
+				return true
+			}
+		}
+		return false
+	}
+
 	// 处理比较操作
 	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
 	for _, op := range operators {
@@ -399,6 +540,44 @@ func evaluateSingleExpressionForEval(expression string, data *TemplateData) bool
 			right := parts[1]
 
 			return evaluateCompare(left, right, op, data)
+		}
+	}
+
+	// 处理数学运算
+	mathOperators := []string{"+", "-", "*", "/"}
+	for _, op := range mathOperators {
+		if strings.Contains(expression, op) {
+			parts := strings.Split(expression, op)
+			if len(parts) != 2 {
+				return false
+			}
+
+			left := parts[0]
+			right := parts[1]
+
+			// 尝试将左右两边解析为数字
+			leftVal, leftErr := strconv.Atoi(left)
+			rightVal, rightErr := strconv.Atoi(right)
+			if leftErr == nil && rightErr == nil {
+				// 执行数学运算
+				var result int
+				switch op {
+				case "+":
+					result = leftVal + rightVal
+				case "-":
+					result = leftVal - rightVal
+				case "*":
+					result = leftVal * rightVal
+				case "/":
+					if rightVal != 0 {
+						result = leftVal / rightVal
+					} else {
+						return false
+					}
+				}
+				// 数学运算结果非零即为真
+				return result != 0
+			}
 		}
 	}
 
@@ -526,28 +705,16 @@ func replaceVariables(content string, data *TemplateData) string {
 		varName := strings.Trim(match, "${}")
 		varName = strings.TrimSpace(varName)
 
-		switch varName {
-		case "execPath":
-			return data.ExecPath
-		case "programPID":
-			return strconv.Itoa(data.ProgramPID)
-		case "firstRunTime":
-			return data.FirstRunTime
-		case "lastRunTime":
-			return data.LastRunTime
-		case "runCount":
-			return strconv.Itoa(data.RunCount)
-		case "currentTime":
-			return data.CurrentTime
-		case "currentIPv4":
-			return data.CurrentIPv4
-		case "currentIPv6":
-			return data.CurrentIPv6
-		default:
-			if strings.HasPrefix(varName, "lastRecord.") {
-				field := strings.TrimPrefix(varName, "lastRecord.")
-				if data.LastRecord != nil {
-					switch field {
+		// 处理带点的变量，如lastRecord.LastRunTime
+		if strings.Contains(varName, ".") {
+			parts := strings.Split(varName, ".")
+			if len(parts) == 2 {
+				baseVar := parts[0]
+				member := parts[1]
+
+				// 处理lastRecord的成员变量
+				if baseVar == "lastRecord" && data.LastRecord != nil {
+					switch member {
 					case "LastRunTime":
 						return data.LastRecord.LastRunTime
 					case "IPv4":
@@ -563,6 +730,40 @@ func replaceVariables(content string, data *TemplateData) string {
 					}
 				}
 			}
+		}
+
+		// 处理简单变量
+		switch varName {
+		case "execPath":
+			return data.ExecPath
+		case "programPID":
+			return strconv.Itoa(data.ProgramPID)
+		case "firstRunTime":
+			return data.FirstRunTime
+		case "lastRunTime":
+			return data.LastRunTime
+		case "runCount":
+			return strconv.Itoa(data.RunCount)
+		case "RunCount":
+			return strconv.Itoa(data.RunCount)
+		case "sendMsg":
+			return strconv.FormatBool(data.SendMsg)
+		case "SendMsg":
+			return strconv.FormatBool(data.SendMsg)
+		case "currentTime":
+			return data.CurrentTime
+		case "currentIPv4":
+			return data.CurrentIPv4
+		case "currentIPv6":
+			return data.CurrentIPv6
+		case "lastRecord":
+			if data.LastRecord != nil {
+				return "not nil"
+			} else {
+				return "nil"
+			}
+		default:
+			// 尝试作为其他变量处理
 			return match
 		}
 	})
