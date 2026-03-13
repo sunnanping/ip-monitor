@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // TemplateData 存储邮件模板渲染所需的数据结构
@@ -22,682 +23,832 @@ type TemplateData struct {
 	CurrentIPv6  string     // 当前IPv6地址
 }
 
-// validateVariables 验证条件表达式中的变量是否存在
-// 参数:
-//
-//	expression: 表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	[]string: 未定义的变量列表
-//	error: 解析错误
-func validateVariables(expression string, data *TemplateData) ([]string, error) {
-	// 处理括号
-	for strings.Contains(expression, "(") {
-		// 找到最内层的括号
-		start := strings.LastIndex(expression, "(")
-		end := strings.Index(expression[start:], ")") + start
-		if start == -1 || end == -1 {
-			return nil, fmt.Errorf("括号不匹配: %s", expression)
-		}
+// TokenType 定义token类型
+type TokenType int
 
-		// 替换括号为占位符
-		expression = expression[:start] + "valid" + expression[end+1:]
-	}
+const (
+	TokenEOF TokenType = iota
+	TokenIdentifier
+	TokenNumber
+	TokenString
+	TokenOperator
+	TokenLParen    // (
+	TokenRParen    // )
+	TokenLBracket  // [
+	TokenRBracket  // ]
+	TokenComma     // ,
+	TokenDot       // .
+)
 
-	// 处理逻辑或操作符 (||, or)
-	if strings.Contains(expression, " || ") {
-		parts := strings.Split(expression, " || ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			undefined, err := validateVariables(part, data)
-			if err != nil {
-				return undefined, err
-			}
-			if len(undefined) > 0 {
-				return undefined, nil
-			}
-		}
-		return nil, nil
-	}
-	if strings.Contains(expression, " or ") {
-		parts := strings.Split(expression, " or ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			undefined, err := validateVariables(part, data)
-			if err != nil {
-				return undefined, err
-			}
-			if len(undefined) > 0 {
-				return undefined, nil
-			}
-		}
-		return nil, nil
-	}
-
-	// 处理逻辑与操作符 (&&, and)
-	if strings.Contains(expression, " && ") {
-		parts := strings.Split(expression, " && ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			undefined, err := validateVariables(part, data)
-			if err != nil {
-				return undefined, err
-			}
-			if len(undefined) > 0 {
-				return undefined, nil
-			}
-		}
-		return nil, nil
-	}
-	if strings.Contains(expression, " and ") {
-		parts := strings.Split(expression, " and ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			undefined, err := validateVariables(part, data)
-			if err != nil {
-				return undefined, err
-			}
-			if len(undefined) > 0 {
-				return undefined, nil
-			}
-		}
-		return nil, nil
-	}
-
-	// 处理逻辑非操作符 (!, not)
-	if strings.HasPrefix(strings.TrimSpace(expression), "!") {
-		innerExpr := strings.TrimSpace(expression[1:])
-		return validateVariables(innerExpr, data)
-	}
-	if strings.HasPrefix(strings.TrimSpace(expression), "not ") {
-		innerExpr := strings.TrimSpace(expression[4:])
-		return validateVariables(innerExpr, data)
-	}
-
-	// 处理单个表达式
-	return validateSingleExpression(expression, data)
+// Token 词法单元
+type Token struct {
+	Type  TokenType
+	Value string
+	Pos   int
 }
 
-// validateSingleExpression 验证单个表达式（不含逻辑操作符）
-// 参数:
-//
-//	expression: 单个表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	[]string: 未定义的变量列表
-//	error: 解析错误
-func validateSingleExpression(expression string, data *TemplateData) ([]string, error) {
-	// 移除空格以简化解析
-	expression = strings.ReplaceAll(expression, " ", "")
+// Lexer 词法分析器
+type Lexer struct {
+	input string
+	pos   int
+	tokens []Token
+}
 
-	// 处理包含检查操作符 (in)
-	if strings.Contains(expression, "in") {
-		parts := strings.Split(expression, "in")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("包含检查操作格式错误: %s", expression)
+// NewLexer 创建新的词法分析器
+func NewLexer(input string) *Lexer {
+	return &Lexer{
+		input:  input,
+		pos:    0,
+		tokens: make([]Token, 0),
+	}
+}
+
+// Tokenize 将输入字符串转换为token列表
+func (l *Lexer) Tokenize() []Token {
+	for l.pos < len(l.input) {
+		l.skipWhitespace()
+		if l.pos >= len(l.input) {
+			break
 		}
 
-		left := parts[0]
+		ch := l.input[l.pos]
 
-		// 验证左侧变量
-		if !isValidVariableWithDot(left) {
-			return []string{left}, nil
+		switch ch {
+		case '(':
+			l.tokens = append(l.tokens, Token{Type: TokenLParen, Value: "(", Pos: l.pos})
+			l.pos++
+		case ')':
+			l.tokens = append(l.tokens, Token{Type: TokenRParen, Value: ")", Pos: l.pos})
+			l.pos++
+		case '[':
+			l.tokens = append(l.tokens, Token{Type: TokenLBracket, Value: "[", Pos: l.pos})
+			l.pos++
+		case ']':
+			l.tokens = append(l.tokens, Token{Type: TokenRBracket, Value: "]", Pos: l.pos})
+			l.pos++
+		case ',':
+			l.tokens = append(l.tokens, Token{Type: TokenComma, Value: ",", Pos: l.pos})
+			l.pos++
+		case '.':
+			l.tokens = append(l.tokens, Token{Type: TokenDot, Value: ".", Pos: l.pos})
+			l.pos++
+		case '"', '\'':
+			l.readString(ch)
+		default:
+			if unicode.IsLetter(rune(ch)) || ch == '_' || ch == '$' {
+				l.readIdentifier()
+			} else if unicode.IsDigit(rune(ch)) {
+				l.readNumber()
+			} else if l.isOperatorStart(ch) {
+				l.readOperator()
+			} else {
+				l.pos++
+			}
 		}
-
-		// 右侧是值列表，不需要验证变量
-		return nil, nil
 	}
 
-	// 处理比较操作
-	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
+	l.tokens = append(l.tokens, Token{Type: TokenEOF, Value: "", Pos: l.pos})
+	return l.tokens
+}
+
+// skipWhitespace 跳过空白字符
+func (l *Lexer) skipWhitespace() {
+	for l.pos < len(l.input) && (l.input[l.pos] == ' ' || l.input[l.pos] == '\t' || l.input[l.pos] == '\n' || l.input[l.pos] == '\r') {
+		l.pos++
+	}
+}
+
+// isOperatorStart 检查字符是否是操作符的开始
+func (l *Lexer) isOperatorStart(ch byte) bool {
+	operators := []string{"==", "!=", ">=", "<=", ">", "<", "&&", "||", "!", "+", "-", "*", "/", "%"}
 	for _, op := range operators {
-		if strings.Contains(expression, op) {
-			parts := strings.Split(expression, op)
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("比较操作格式错误: %s", expression)
-			}
-
-			left := parts[0]
-			right := parts[1]
-
-			// 验证左侧变量
-			if !isValidVariableWithDot(left) {
-				return []string{left}, nil
-			}
-
-			// 右侧如果是数字、布尔值或nil，不需要验证
-			if !isNumber(right) && !isBoolean(right) && right != "nil" {
-				if !isValidVariableWithDot(right) {
-					return []string{right}, nil
-				}
-			}
-
-			return nil, nil
-		}
-	}
-
-	// 处理数学运算
-	mathOperators := []string{"+", "-", "*", "/"}
-	for _, op := range mathOperators {
-		if strings.Contains(expression, op) {
-			parts := strings.Split(expression, op)
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("数学运算格式错误: %s", expression)
-			}
-
-			left := parts[0]
-			right := parts[1]
-
-			// 验证左侧变量
-			if !isNumber(left) && !isValidVariableWithDot(left) {
-				return []string{left}, nil
-			}
-
-			// 验证右侧变量
-			if !isNumber(right) && !isValidVariableWithDot(right) {
-				return []string{right}, nil
-			}
-
-			return nil, nil
-		}
-	}
-
-	// 处理布尔值
-	if expression == "true" || expression == "false" {
-		return nil, nil
-	}
-
-	// 处理变量
-	if expression == "lastRecord" || expression == "lastRecord==nil" {
-		return nil, nil
-	}
-
-	// 检查是否是有效的变量
-	if isValidVariableWithDot(expression) {
-		return nil, nil
-	}
-
-	// 未知变量
-	return []string{expression}, nil
-}
-
-// isValidVariable 检查变量是否有效
-// 参数:
-//
-//	varName: 变量名
-//
-// 返回值:
-//
-//	bool: 变量是否有效
-func isValidVariable(varName string) bool {
-	// 有效的变量名列表
-	validVariables := map[string]bool{
-		"RunCount":   true,
-		"sendMsg":    true,
-		"lastRecord": true,
-	}
-
-	return validVariables[varName]
-}
-
-// isNumber 检查字符串是否为数字
-// 参数:
-//
-//	s: 字符串
-//
-// 返回值:
-//
-//	bool: 是否为数字
-func isNumber(s string) bool {
-	_, err := strconv.Atoi(s)
-	return err == nil
-}
-
-// isBoolean 检查字符串是否为布尔值
-// 参数:
-//
-//	s: 字符串
-//
-// 返回值:
-//
-//	bool: 是否为布尔值
-func isBoolean(s string) bool {
-	return s == "true" || s == "false"
-}
-
-// splitByOperator 安全地分割操作符，避免分割变量名中的子串
-// 参数:
-//
-//	s: 字符串
-//	op: 操作符
-//
-// 返回值:
-//
-//	[]string: 分割后的字符串数组
-func splitByOperator(s, op string) []string {
-	var parts []string
-	var current strings.Builder
-
-	for i := 0; i < len(s); i++ {
-		if i+len(op) <= len(s) && s[i:i+len(op)] == op {
-			// 检查是否是独立的操作符
-			isOperator := true
-
-			// 检查前一个字符是否是字母或数字
-			if i > 0 && (s[i-1] >= 'a' && s[i-1] <= 'z' || s[i-1] >= 'A' && s[i-1] <= 'Z' || s[i-1] >= '0' && s[i-1] <= '9' || s[i-1] == '.') {
-				isOperator = false
-			}
-
-			// 检查后一个字符是否是字母或数字
-			if i+len(op) < len(s) && (s[i+len(op)] >= 'a' && s[i+len(op)] <= 'z' || s[i+len(op)] >= 'A' && s[i+len(op)] <= 'Z' || s[i+len(op)] >= '0' && s[i+len(op)] <= '9' || s[i+len(op)] == '.') {
-				isOperator = false
-			}
-
-			if isOperator {
-				parts = append(parts, current.String())
-				current.Reset()
-				i += len(op) - 1
-				continue
-			}
-		}
-		current.WriteByte(s[i])
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
-}
-
-// isValidVariableWithDot 检查带点的变量是否有效
-// 参数:
-//
-//	varName: 变量名，支持带点的结构体成员变量
-//
-// 返回值:
-//
-//	bool: 变量是否有效
-func isValidVariableWithDot(varName string) bool {
-	// 有效的变量名列表
-	validVariables := map[string]bool{
-		"RunCount":    true,
-		"sendMsg":     true,
-		"lastRecord":  true,
-		"currentTime": true,
-		"currentIPv4": true,
-		"currentIPv6": true,
-	}
-
-	// 检查是否是简单变量
-	if validVariables[varName] {
-		return true
-	}
-
-	// 检查是否是带点的变量，如lastRecord.LastRunTime
-	parts := strings.Split(varName, ".")
-	if len(parts) > 1 {
-		// 检查基础变量是否有效
-		baseVar := parts[0]
-		if validVariables[baseVar] {
-			// 对于lastRecord，检查其成员变量
-			if baseVar == "lastRecord" {
-				validMembers := map[string]bool{
-					"LastRunTime": true,
-					"IPv4":        true,
-					"IPv6":        true,
-					"EmailSent":   true,
-					"EmailResult": true,
-					"RunCount":    true,
-				}
-				member := parts[1]
-				return validMembers[member]
-			}
+		if len(op) > 0 && op[0] == ch {
 			return true
 		}
 	}
-
 	return false
 }
 
-// evaluateCondition 评估条件表达式
-// 参数:
-//
-//	condition: 条件表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	bool: 条件是否为真
-//	[]string: 未定义的变量列表
-//	error: 解析错误
-func evaluateCondition(condition string, data *TemplateData) (bool, []string, error) {
-	condition = strings.TrimSpace(condition)
-
-	// 验证变量
-	undefined, err := validateVariables(condition, data)
-	if err != nil {
-		return false, undefined, err
+// readIdentifier 读取标识符
+func (l *Lexer) readIdentifier() {
+	start := l.pos
+	for l.pos < len(l.input) && (unicode.IsLetter(rune(l.input[l.pos])) || unicode.IsDigit(rune(l.input[l.pos])) || l.input[l.pos] == '_' || l.input[l.pos] == '.' || l.input[l.pos] == '$') {
+		l.pos++
 	}
-	if len(undefined) > 0 {
-		return false, undefined, nil
-	}
-
-	// 评估表达式
-	result := evaluateExpression(condition, data)
-	return result, nil, nil
+	value := l.input[start:l.pos]
+	l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: value, Pos: start})
 }
 
-// evaluateExpression 评估复杂表达式，支持OGNL操作符
-// 参数:
-//
-//	expression: 表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	bool: 表达式是否为真
-func evaluateExpression(expression string, data *TemplateData) bool {
-	// 处理括号
-	for strings.Contains(expression, "(") {
-		// 找到最内层的括号
-		start := strings.LastIndex(expression, "(")
-		end := strings.Index(expression[start:], ")") + start
-		if start == -1 || end == -1 {
-			return false
-		}
-
-		// 计算括号内的表达式
-		innerExpr := expression[start+1 : end]
-		result := evaluateExpression(innerExpr, data)
-
-		// 替换括号为结果
-		expression = expression[:start] + strconv.FormatBool(result) + expression[end+1:]
+// readNumber 读取数字
+func (l *Lexer) readNumber() {
+	start := l.pos
+	for l.pos < len(l.input) && (unicode.IsDigit(rune(l.input[l.pos])) || l.input[l.pos] == '.') {
+		l.pos++
 	}
-	fmt.Printf("评估复杂表达式:%s\n", expression)
-
-	// 处理逻辑或操作符 (||, or)
-	if strings.Contains(expression, " || ") {
-		parts := strings.Split(expression, " || ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if evaluateExpression(part, data) {
-				return true
-			}
-		}
-		return false
-	}
-	if strings.Contains(expression, " or ") {
-		parts := strings.Split(expression, " or ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if evaluateExpression(part, data) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// 处理逻辑与操作符 (&&, and)
-	if strings.Contains(expression, " && ") {
-		parts := strings.Split(expression, " && ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if !evaluateExpression(part, data) {
-				return false
-			}
-		}
-		return true
-	}
-	if strings.Contains(expression, " and ") {
-		parts := strings.Split(expression, " and ")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if !evaluateExpression(part, data) {
-				return false
-			}
-		}
-		return true
-	}
-
-	// 处理逻辑非操作符 (!, not)
-	if strings.HasPrefix(strings.TrimSpace(expression), "!") {
-		innerExpr := strings.TrimSpace(expression[1:])
-		return !evaluateExpression(innerExpr, data)
-	}
-	if strings.HasPrefix(strings.TrimSpace(expression), "not ") {
-		innerExpr := strings.TrimSpace(expression[4:])
-		return !evaluateExpression(innerExpr, data)
-	}
-
-	// 处理单个表达式
-	return evaluateSingleExpressionForEval(expression, data)
+	value := l.input[start:l.pos]
+	l.tokens = append(l.tokens, Token{Type: TokenNumber, Value: value, Pos: start})
 }
 
-// evaluateSingleExpressionForEval 评估单个表达式（不含逻辑操作符）
-// 参数:
-//
-//	expression: 单个表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	bool: 表达式是否为真
-func evaluateSingleExpressionForEval(expression string, data *TemplateData) bool {
-	// 移除空格以简化解析
-	expression = strings.ReplaceAll(expression, " ", "")
-
-	// 处理包含检查操作符 (in)
-	if strings.Contains(expression, "in") {
-		parts := strings.Split(expression, "in")
-		if len(parts) != 2 {
-			return false
-		}
-
-		left := parts[0]
-		right := parts[1]
-
-		// 解析右侧的数组或集合
-		// 简单处理，假设右侧是逗号分隔的值列表
-		values := strings.Split(right, ",")
-		for _, value := range values {
-			value = strings.TrimSpace(value)
-			// 移除引号
-			value = strings.Trim(value, `"'`)
-			if left == value {
-				return true
-			}
-		}
-		return false
-	}
-
-	// 处理比较操作
-	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
-	for _, op := range operators {
-		if strings.Contains(expression, op) {
-			parts := strings.Split(expression, op)
-			if len(parts) != 2 {
-				return false
-			}
-
-			left := parts[0]
-			right := parts[1]
-
-			return evaluateCompare(left, right, op, data)
+// readString 读取字符串
+func (l *Lexer) readString(quote byte) {
+	start := l.pos
+	l.pos++ // 跳过开始的引号
+	for l.pos < len(l.input) && l.input[l.pos] != quote {
+		if l.input[l.pos] == '\\' && l.pos+1 < len(l.input) {
+			l.pos += 2
+		} else {
+			l.pos++
 		}
 	}
+	if l.pos < len(l.input) {
+		l.pos++ // 跳过结束的引号
+	}
+	value := l.input[start:l.pos]
+	l.tokens = append(l.tokens, Token{Type: TokenString, Value: value, Pos: start})
+}
 
-	// 处理数学运算
-	mathOperators := []string{"+", "-", "*", "/"}
-	for _, op := range mathOperators {
-		if strings.Contains(expression, op) {
-			parts := strings.Split(expression, op)
-			if len(parts) != 2 {
-				return false
-			}
+// readOperator 读取操作符
+func (l *Lexer) readOperator() {
+	start := l.pos
+	// 尝试读取双字符操作符
+	if l.pos+1 < len(l.input) {
+		twoChar := l.input[l.pos : l.pos+2]
+		if twoChar == "==" || twoChar == "!=" || twoChar == ">=" || twoChar == "<=" || twoChar == "&&" || twoChar == "||" {
+			l.pos += 2
+			l.tokens = append(l.tokens, Token{Type: TokenOperator, Value: twoChar, Pos: start})
+			return
+		}
+	}
+	// 单字符操作符
+	l.pos++
+	l.tokens = append(l.tokens, Token{Type: TokenOperator, Value: string(l.input[start]), Pos: start})
+}
 
-			left := parts[0]
-			right := parts[1]
+// NodeType AST节点类型
+type NodeType int
 
-			// 尝试将左右两边解析为数字
-			leftVal, leftErr := strconv.Atoi(left)
-			rightVal, rightErr := strconv.Atoi(right)
-			if leftErr == nil && rightErr == nil {
-				// 执行数学运算
-				var result int
-				switch op {
-				case "+":
-					result = leftVal + rightVal
-				case "-":
-					result = leftVal - rightVal
-				case "*":
-					result = leftVal * rightVal
-				case "/":
-					if rightVal != 0 {
-						result = leftVal / rightVal
-					} else {
-						return false
-					}
+const (
+	NodeBinary NodeType = iota
+	NodeUnary
+	NodeLiteral
+	NodeIdentifier
+	NodeMemberAccess
+	NodeMethodCall
+	NodeArrayAccess
+)
+
+// ASTNode 抽象语法树节点
+type ASTNode struct {
+	Type     NodeType
+	Value    string
+	Left     *ASTNode
+	Right    *ASTNode
+	Children []*ASTNode
+}
+
+// Parser 语法分析器
+type Parser struct {
+	tokens []Token
+	pos    int
+}
+
+// NewParser 创建新的语法分析器
+func NewParser(tokens []Token) *Parser {
+	return &Parser{
+		tokens: tokens,
+		pos:    0,
+	}
+}
+
+// Parse 解析表达式，返回AST根节点
+func (p *Parser) Parse() *ASTNode {
+	return p.parseOr()
+}
+
+// parseOr 解析逻辑或表达式 (优先级最低)
+func (p *Parser) parseOr() *ASTNode {
+	left := p.parseAnd()
+
+	for p.matchOperator("||") || p.matchKeyword("or") {
+		op := p.previous().Value
+		right := p.parseAnd()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseAnd 解析逻辑与表达式
+func (p *Parser) parseAnd() *ASTNode {
+	left := p.parseEquality()
+
+	for p.matchOperator("&&") || p.matchKeyword("and") {
+		op := p.previous().Value
+		right := p.parseEquality()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseEquality 解析相等性表达式 (==, !=)
+func (p *Parser) parseEquality() *ASTNode {
+	left := p.parseComparison()
+
+	for p.matchOperator("==") || p.matchOperator("!=") {
+		op := p.previous().Value
+		right := p.parseComparison()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseComparison 解析比较表达式 (<, >, <=, >=)
+func (p *Parser) parseComparison() *ASTNode {
+	left := p.parseAdditive()
+
+	for p.matchOperator("<") || p.matchOperator(">") || p.matchOperator("<=") || p.matchOperator(">=") {
+		op := p.previous().Value
+		right := p.parseAdditive()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseAdditive 解析加减表达式 (+, -)
+func (p *Parser) parseAdditive() *ASTNode {
+	left := p.parseMultiplicative()
+
+	for p.matchOperator("+") || p.matchOperator("-") {
+		op := p.previous().Value
+		right := p.parseMultiplicative()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseMultiplicative 解析乘除表达式 (*, /, %)
+func (p *Parser) parseMultiplicative() *ASTNode {
+	left := p.parseUnary()
+
+	for p.matchOperator("*") || p.matchOperator("/") || p.matchOperator("%") {
+		op := p.previous().Value
+		right := p.parseUnary()
+		left = &ASTNode{
+			Type:  NodeBinary,
+			Value: op,
+			Left:  left,
+			Right: right,
+		}
+	}
+
+	return left
+}
+
+// parseUnary 解析一元表达式 (!, not, -)
+func (p *Parser) parseUnary() *ASTNode {
+	if p.matchOperator("!") || p.matchKeyword("not") {
+		op := p.previous().Value
+		operand := p.parseUnary()
+		return &ASTNode{
+			Type:  NodeUnary,
+			Value: op,
+			Left:  operand,
+		}
+	}
+
+	if p.matchOperator("-") {
+		op := p.previous().Value
+		operand := p.parseUnary()
+		return &ASTNode{
+			Type:  NodeUnary,
+			Value: op,
+			Left:  operand,
+		}
+	}
+
+	return p.parsePrimary()
+}
+
+// parsePrimary 解析基本表达式
+func (p *Parser) parsePrimary() *ASTNode {
+	// 解析括号表达式
+	if p.match(TokenLParen) {
+		expr := p.Parse()
+		p.consume(TokenRParen, "期望 ')'")
+		return expr
+	}
+
+	// 解析数字
+	if p.match(TokenNumber) {
+		return &ASTNode{
+			Type:  NodeLiteral,
+			Value: p.previous().Value,
+		}
+	}
+
+	// 解析字符串
+	if p.match(TokenString) {
+		return &ASTNode{
+			Type:  NodeLiteral,
+			Value: p.previous().Value,
+		}
+	}
+
+	// 解析标识符（可能包含成员访问、方法调用等）
+	if p.match(TokenIdentifier) {
+		return p.parsePostfix(&ASTNode{
+			Type:  NodeIdentifier,
+			Value: p.previous().Value,
+		})
+	}
+
+	return nil
+}
+
+// parsePostfix 解析后缀表达式（成员访问、方法调用、数组访问）
+func (p *Parser) parsePostfix(node *ASTNode) *ASTNode {
+	for {
+		// 成员访问: obj.property
+		if p.match(TokenDot) {
+			if p.match(TokenIdentifier) {
+				member := p.previous().Value
+				node = &ASTNode{
+					Type:     NodeMemberAccess,
+					Value:    member,
+					Left:     node,
+					Children: []*ASTNode{node},
 				}
-				// 数学运算结果非零即为真
-				return result != 0
 			}
+		} else if p.match(TokenLBracket) {
+			// 数组访问: array[index]
+			index := p.Parse()
+			p.consume(TokenRBracket, "期望 ']'")
+			node = &ASTNode{
+				Type:     NodeArrayAccess,
+				Value:    "[]",
+				Left:     node,
+				Right:    index,
+				Children: []*ASTNode{node, index},
+			}
+		} else {
+			break
 		}
 	}
+	return node
+}
 
-	// 处理布尔值
-	if expression == "true" {
+// match 匹配指定类型的token
+func (p *Parser) match(tokenType TokenType) bool {
+	if p.check(tokenType) {
+		p.advance()
 		return true
 	}
-	if expression == "false" {
-		return false
-	}
-
-	// 处理变量
-	if expression == "lastRecord" {
-		return data.LastRecord != nil
-	}
-
 	return false
 }
 
-// evaluateComparison 评估比较操作表达式
-// 参数:
-//
-//	comparison: 比较表达式字符串
-//	data: 模板数据
-//
-// 返回值:
-//
-//	bool: 比较结果是否为真
-func evaluateComparison(comparison string, data *TemplateData) bool {
-	// 支持的比较操作符
-	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
-	for _, op := range operators {
-		if strings.Contains(comparison, op) {
-			parts := strings.Split(comparison, op)
-			if len(parts) != 2 {
-				return false
-			}
-
-			left := strings.TrimSpace(parts[0])
-			right := strings.TrimSpace(parts[1])
-
-			return evaluateCompare(left, right, op, data)
-		}
-	}
-
-	// 处理布尔值
-	if comparison == "true" {
+// matchOperator 匹配操作符
+func (p *Parser) matchOperator(op string) bool {
+	if p.check(TokenOperator) && p.peek().Value == op {
+		p.advance()
 		return true
 	}
-	if comparison == "false" {
-		return false
-	}
-
-	// 处理变量
-	if comparison == "lastRecord==nil" {
-		return data.LastRecord == nil
-	}
-	if comparison == "lastRecord" {
-		return data.LastRecord != nil
-	}
-
 	return false
 }
 
-// evaluateCompare 执行具体的比较操作
-// 参数:
-//
-//	left: 左侧表达式
-//	right: 右侧表达式
-//	op: 比较操作符
-//	data: 模板数据
-//
-// 返回值:
-//
-//	bool: 比较结果是否为真
-func evaluateCompare(left, right, op string, data *TemplateData) bool {
-	// 对于RunCount的比较，需要特殊处理
-	if left == "RunCount" {
-		leftInt, err := strconv.Atoi(right)
-		if err == nil {
-			switch op {
-			case "==":
-				return data.RunCount == leftInt
-			case "!=":
-				return data.RunCount != leftInt
-			case ">":
-				return data.RunCount > leftInt
-			case "<":
-				return data.RunCount < leftInt
-			case ">=":
-				return data.RunCount >= leftInt
-			case "<=":
-				return data.RunCount <= leftInt
-			}
-		}
+// matchKeyword 匹配关键字（and, or, not等）
+func (p *Parser) matchKeyword(keyword string) bool {
+	if p.check(TokenIdentifier) && strings.ToLower(p.peek().Value) == keyword {
+		p.advance()
+		return true
+	}
+	return false
+}
+
+// check 检查当前token是否是指定类型
+func (p *Parser) check(tokenType TokenType) bool {
+	if p.isAtEnd() {
+		return false
+	}
+	return p.peek().Type == tokenType
+}
+
+// advance 前进到下一个token
+func (p *Parser) advance() Token {
+	if !p.isAtEnd() {
+		p.pos++
+	}
+	return p.previous()
+}
+
+// isAtEnd 检查是否到达token列表末尾
+func (p *Parser) isAtEnd() bool {
+	return p.peek().Type == TokenEOF
+}
+
+// peek 查看当前token
+func (p *Parser) peek() Token {
+	return p.tokens[p.pos]
+}
+
+// previous 获取前一个token
+func (p *Parser) previous() Token {
+	return p.tokens[p.pos-1]
+}
+
+// consume 消费指定类型的token，否则报错
+func (p *Parser) consume(tokenType TokenType, message string) Token {
+	if p.check(tokenType) {
+		return p.advance()
+	}
+	panic(fmt.Sprintf("%s, 实际得到: %v", message, p.peek()))
+}
+
+// Evaluator 表达式求值器
+type Evaluator struct {
+	data *TemplateData
+}
+
+// NewEvaluator 创建新的求值器
+func NewEvaluator(data *TemplateData) *Evaluator {
+	return &Evaluator{data: data}
+}
+
+// Evaluate 评估AST节点
+func (e *Evaluator) Evaluate(node *ASTNode) interface{} {
+	if node == nil {
+		return nil
 	}
 
-	// 对于其他比较
-	leftVal := left
-	rightVal := right
-
-	switch op {
-	case "==":
-		return leftVal == rightVal
-	case "!=":
-		return leftVal != rightVal
+	switch node.Type {
+	case NodeBinary:
+		return e.evaluateBinary(node)
+	case NodeUnary:
+		return e.evaluateUnary(node)
+	case NodeLiteral:
+		return e.evaluateLiteral(node)
+	case NodeIdentifier:
+		return e.evaluateIdentifier(node)
+	case NodeMemberAccess:
+		return e.evaluateMemberAccess(node)
 	default:
+		return nil
+	}
+}
+
+// evaluateBinary 评估二元表达式
+func (e *Evaluator) evaluateBinary(node *ASTNode) interface{} {
+	left := e.Evaluate(node.Left)
+	right := e.Evaluate(node.Right)
+
+	switch node.Value {
+	case "||", "or":
+		return toBool(left) || toBool(right)
+	case "&&", "and":
+		return toBool(left) && toBool(right)
+	case "==":
+		return compareEqual(left, right)
+	case "!=":
+		return !compareEqual(left, right)
+	case "<":
+		return compareLess(left, right)
+	case ">":
+		return compareGreater(left, right)
+	case "<=":
+		return compareLessEqual(left, right)
+	case ">=":
+		return compareGreaterEqual(left, right)
+	case "+":
+		return add(left, right)
+	case "-":
+		return subtract(left, right)
+	case "*":
+		return multiply(left, right)
+	case "/":
+		return divide(left, right)
+	case "%":
+		return modulo(left, right)
+	default:
+		return nil
+	}
+}
+
+// evaluateUnary 评估一元表达式
+func (e *Evaluator) evaluateUnary(node *ASTNode) interface{} {
+	operand := e.Evaluate(node.Left)
+
+	switch node.Value {
+	case "!", "not":
+		return !toBool(operand)
+	case "-":
+		if num, ok := toFloat64(operand); ok {
+			return -num
+		}
+		return nil
+	default:
+		return operand
+	}
+}
+
+// evaluateLiteral 评估字面量
+func (e *Evaluator) evaluateLiteral(node *ASTNode) interface{} {
+	value := node.Value
+
+	// 尝试解析为数字
+	if num, err := strconv.ParseFloat(value, 64); err == nil {
+		return num
+	}
+
+	// 处理字符串字面量（移除引号）
+	if (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) ||
+		(strings.HasPrefix(value, `'`) && strings.HasSuffix(value, `'`)) {
+		return value[1 : len(value)-1]
+	}
+
+	// 处理布尔值
+	if value == "true" {
+		return true
+	}
+	if value == "false" {
 		return false
 	}
+
+	// 处理nil
+	if value == "nil" || value == "null" {
+		return nil
+	}
+
+	return value
+}
+
+// evaluateIdentifier 评估标识符
+func (e *Evaluator) evaluateIdentifier(node *ASTNode) interface{} {
+	name := node.Value
+
+	switch name {
+	case "RunCount":
+		return float64(e.data.RunCount)
+	case "sendMsg", "SendMsg":
+		return e.data.SendMsg
+	case "lastRecord":
+		return e.data.LastRecord
+	case "currentTime":
+		return e.data.CurrentTime
+	case "currentIPv4":
+		return e.data.CurrentIPv4
+	case "currentIPv6":
+		return e.data.CurrentIPv6
+	case "execPath":
+		return e.data.ExecPath
+	case "programPID":
+		return float64(e.data.ProgramPID)
+	case "firstRunTime":
+		return e.data.FirstRunTime
+	case "lastRunTime":
+		return e.data.LastRunTime
+	default:
+		return name
+	}
+}
+
+// evaluateMemberAccess 评估成员访问
+func (e *Evaluator) evaluateMemberAccess(node *ASTNode) interface{} {
+	base := e.Evaluate(node.Children[0])
+	member := node.Value
+
+	if record, ok := base.(*RunRecord); ok && record != nil {
+		switch member {
+		case "LastRunTime":
+			return record.LastRunTime
+		case "IPv4":
+			return record.IPv4
+		case "IPv6":
+			return record.IPv6
+		case "EmailSent":
+			return record.EmailSent
+		case "EmailResult":
+			return record.EmailResult
+		case "RunCount":
+			return float64(record.RunCount)
+		default:
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// toBool 将值转换为布尔值
+func toBool(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	if f, ok := toFloat64(v); ok {
+		return f != 0
+	}
+	if s, ok := v.(string); ok {
+		return s != "" && s != "false" && s != "0"
+	}
+	return true
+}
+
+// toFloat64 将值转换为float64
+func toFloat64(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	case int:
+		return float64(val), true
+	case int32:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case string:
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// toString 将值转换为字符串
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if f, ok := toFloat64(v); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	if b, ok := v.(bool); ok {
+		return strconv.FormatBool(b)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// compareEqual 比较相等
+func compareEqual(left, right interface{}) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+
+	// 数字比较
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l == r
+		}
+	}
+
+	// 字符串比较
+	return toString(left) == toString(right)
+}
+
+// compareLess 比较小于
+func compareLess(left, right interface{}) bool {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l < r
+		}
+	}
+	return toString(left) < toString(right)
+}
+
+// compareGreater 比较大于
+func compareGreater(left, right interface{}) bool {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l > r
+		}
+	}
+	return toString(left) > toString(right)
+}
+
+// compareLessEqual 比较小于等于
+func compareLessEqual(left, right interface{}) bool {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l <= r
+		}
+	}
+	return toString(left) <= toString(right)
+}
+
+// compareGreaterEqual 比较大于等于
+func compareGreaterEqual(left, right interface{}) bool {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l >= r
+		}
+	}
+	return toString(left) >= toString(right)
+}
+
+// add 加法运算
+func add(left, right interface{}) interface{} {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l + r
+		}
+	}
+	return toString(left) + toString(right)
+}
+
+// subtract 减法运算
+func subtract(left, right interface{}) interface{} {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l - r
+		}
+	}
+	return nil
+}
+
+// multiply 乘法运算
+func multiply(left, right interface{}) interface{} {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok {
+			return l * r
+		}
+	}
+	return nil
+}
+
+// divide 除法运算
+func divide(left, right interface{}) interface{} {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok && r != 0 {
+			return l / r
+		}
+	}
+	return nil
+}
+
+// modulo 取模运算
+func modulo(left, right interface{}) interface{} {
+	if l, ok := toFloat64(left); ok {
+		if r, ok := toFloat64(right); ok && r != 0 {
+			return float64(int64(l) % int64(r))
+		}
+	}
+	return nil
+}
+
+// evaluateCondition 评估条件表达式（新实现）
+func evaluateCondition(condition string, data *TemplateData) (bool, []string, error) {
+	// 词法分析
+	lexer := NewLexer(condition)
+	tokens := lexer.Tokenize()
+
+	// 语法分析
+	parser := NewParser(tokens)
+	ast := parser.Parse()
+
+	// 求值
+	evaluator := NewEvaluator(data)
+	result := evaluator.Evaluate(ast)
+
+	return toBool(result), nil, nil
 }
 
 // replaceVariables 替换模板中的变量
-// 参数:
-//
-//	content: 模板内容
-//	data: 模板数据
-//
-// 返回值:
-//
-//	string: 替换后的内容
 func replaceVariables(content string, data *TemplateData) string {
 	re := regexp.MustCompile(`\$\{([^}]+)\}`)
 
@@ -705,83 +856,24 @@ func replaceVariables(content string, data *TemplateData) string {
 		varName := strings.Trim(match, "${}")
 		varName = strings.TrimSpace(varName)
 
-		// 处理带点的变量，如lastRecord.LastRunTime
-		if strings.Contains(varName, ".") {
-			parts := strings.Split(varName, ".")
-			if len(parts) == 2 {
-				baseVar := parts[0]
-				member := parts[1]
+		// 使用新的表达式求值器来解析变量
+		lexer := NewLexer(varName)
+		tokens := lexer.Tokenize()
+		parser := NewParser(tokens)
+		ast := parser.Parse()
+		evaluator := NewEvaluator(data)
+		value := evaluator.Evaluate(ast)
 
-				// 处理lastRecord的成员变量
-				if baseVar == "lastRecord" && data.LastRecord != nil {
-					switch member {
-					case "LastRunTime":
-						return data.LastRecord.LastRunTime
-					case "IPv4":
-						return data.LastRecord.IPv4
-					case "IPv6":
-						return data.LastRecord.IPv6
-					case "EmailSent":
-						return strconv.FormatBool(data.LastRecord.EmailSent)
-					case "EmailResult":
-						return data.LastRecord.EmailResult
-					case "RunCount":
-						return strconv.Itoa(data.LastRecord.RunCount)
-					}
-				}
-			}
+		if value == nil {
+			return "nil"
 		}
-
-		// 处理简单变量
-		switch varName {
-		case "execPath":
-			return data.ExecPath
-		case "programPID":
-			return strconv.Itoa(data.ProgramPID)
-		case "firstRunTime":
-			return data.FirstRunTime
-		case "lastRunTime":
-			return data.LastRunTime
-		case "runCount":
-			return strconv.Itoa(data.RunCount)
-		case "RunCount":
-			return strconv.Itoa(data.RunCount)
-		case "sendMsg":
-			return strconv.FormatBool(data.SendMsg)
-		case "SendMsg":
-			return strconv.FormatBool(data.SendMsg)
-		case "currentTime":
-			return data.CurrentTime
-		case "currentIPv4":
-			return data.CurrentIPv4
-		case "currentIPv6":
-			return data.CurrentIPv6
-		case "lastRecord":
-			if data.LastRecord != nil {
-				return "not nil"
-			} else {
-				return "nil"
-			}
-		default:
-			// 尝试作为其他变量处理
-			return match
-		}
+		return toString(value)
 	})
 
 	return result
 }
 
 // parseTemplate 解析模板，处理条件判断
-// 参数:
-//
-//	template: 模板内容
-//	data: 模板数据
-//
-// 返回值:
-//
-//	string: 解析后的内容
-//	[]string: 未定义的变量列表
-//	error: 解析错误
 func parseTemplate(template string, data *TemplateData) (string, []string, error) {
 	re := regexp.MustCompile(`\s*<if condition="([^"]+)">([\s\S]*?)</if>\s*`)
 
@@ -797,7 +889,7 @@ func parseTemplate(template string, data *TemplateData) (string, []string, error
 		condition := submatches[1]
 		content := submatches[2]
 
-		// 评估条件并验证变量
+		// 评估条件
 		conditionResult, undefined, err := evaluateCondition(condition, data)
 		if err != nil {
 			parseError = err
@@ -822,16 +914,6 @@ func parseTemplate(template string, data *TemplateData) (string, []string, error
 }
 
 // renderMailTemplate 渲染邮件模板
-// 参数:
-//
-//	templatePath: 模板文件路径
-//	data: 模板数据
-//
-// 返回值:
-//
-//	string: 渲染后的内容
-//	[]string: 未定义的变量列表
-//	error: 错误信息
 func renderMailTemplate(templatePath string, data *TemplateData) (string, []string, error) {
 	templateContent, err := ioutil.ReadFile(templatePath)
 	if err != nil {
